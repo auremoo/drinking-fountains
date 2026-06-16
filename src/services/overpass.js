@@ -18,7 +18,15 @@
 const ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.openstreetmap.ru/api/interpreter',
 ]
+
+/**
+ * Per-endpoint network timeout, in milliseconds. Without this, a single slow
+ * or unresponsive mirror can hang the whole search instead of falling back.
+ * @type {number}
+ */
+const ENDPOINT_TIMEOUT_MS = 12000
 
 /**
  * A normalized drinking-water fountain.
@@ -101,19 +109,32 @@ export async function fetchFountains(bbox, signal) {
   let lastError
 
   for (const endpoint of ENDPOINTS) {
+    // Race each mirror against its own timeout so a slow/unresponsive server
+    // can't stall the whole search; the caller's signal still cancels everything.
+    const timeoutController = new AbortController()
+    const timer = setTimeout(
+      () => timeoutController.abort(),
+      ENDPOINT_TIMEOUT_MS,
+    )
+    const onAbort = () => timeoutController.abort()
+    signal?.addEventListener('abort', onAbort)
+
     try {
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body,
-        signal,
+        signal: timeoutController.signal,
       })
       if (!res.ok) throw new Error(`Overpass HTTP ${res.status}`)
       const json = await res.json()
       return (json.elements ?? []).map(normalize).filter(Boolean)
     } catch (err) {
-      if (err.name === 'AbortError') throw err
+      if (signal?.aborted) throw err // caller cancelled; not a per-endpoint failure
       lastError = err
+    } finally {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
     }
   }
   throw new Error(
