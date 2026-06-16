@@ -3,7 +3,12 @@ import MapView from './components/MapView.jsx'
 import FountainList from './components/FountainList.jsx'
 import { useGeolocation } from './hooks/useGeolocation.js'
 import { useFountains } from './hooks/useFountains.js'
-import { geocodePlace } from './services/geocode.js'
+import { geocodePlace, searchPlaces } from './services/geocode.js'
+
+/** Debounce, in milliseconds, before fetching place suggestions while typing. */
+const CITY_SUGGEST_DEBOUNCE_MS = 350
+/** Minimum query length before suggestions are fetched. */
+const CITY_SUGGEST_MIN_LENGTH = 2
 
 /**
  * Half-width/height (in degrees) of the bounding box used for the first
@@ -38,6 +43,9 @@ export default function App() {
   const [cityQuery, setCityQuery] = useState('')
   const [cityError, setCityError] = useState(null)
   const [cityLoading, setCityLoading] = useState(false)
+  /** Type-ahead place suggestions for the current query. */
+  const [citySuggestions, setCitySuggestions] = useState([])
+  const citySuggestAbortRef = useRef(null)
   /** True once the user has dismissed the current geolocation error toast. */
   const [errorDismissed, setErrorDismissed] = useState(false)
   /** Position the map should animate to (recenter button / list selection). */
@@ -94,9 +102,41 @@ export default function App() {
     [search],
   )
 
+  // Debounced type-ahead suggestions as the user types a place name.
+  useEffect(() => {
+    if (!citySearchOpen || cityQuery.trim().length < CITY_SUGGEST_MIN_LENGTH) {
+      setCitySuggestions([])
+      return
+    }
+    const timer = setTimeout(() => {
+      citySuggestAbortRef.current?.abort()
+      const controller = new AbortController()
+      citySuggestAbortRef.current = controller
+      searchPlaces(cityQuery, controller.signal)
+        .then(setCitySuggestions)
+        .catch((err) => {
+          if (err.name !== 'AbortError') setCitySuggestions([])
+        })
+    }, CITY_SUGGEST_DEBOUNCE_MS)
+    return () => clearTimeout(timer)
+  }, [cityQuery, citySearchOpen])
+
+  const handleSuggestionSelect = useCallback(
+    (place) => {
+      citySuggestAbortRef.current?.abort()
+      setCitySuggestions([])
+      setCityQuery('')
+      setCityError(null)
+      handlePick(place.lat, place.lng)
+    },
+    [handlePick],
+  )
+
   const handleCitySubmit = useCallback(
     async (e) => {
       e.preventDefault()
+      citySuggestAbortRef.current?.abort()
+      setCitySuggestions([])
       setCityLoading(true)
       setCityError(null)
       try {
@@ -104,7 +144,7 @@ export default function App() {
         handlePick(lat, lng)
         setCityQuery('')
       } catch (err) {
-        setCityError(err.message)
+        if (err.name !== 'AbortError') setCityError(err.message)
       } finally {
         setCityLoading(false)
       }
@@ -147,23 +187,41 @@ export default function App() {
       />
 
       {citySearchOpen && (
-        <form className="city-search" onSubmit={handleCitySubmit}>
-          <input
-            className="city-search__input"
-            type="text"
-            value={cityQuery}
-            onChange={(e) => setCityQuery(e.target.value)}
-            placeholder="Search a city or address…"
-            autoFocus
-          />
-          <button
-            className="btn btn--primary city-search__submit"
-            type="submit"
-            disabled={cityLoading || !cityQuery.trim()}
-          >
-            {cityLoading ? '…' : 'Go'}
-          </button>
-        </form>
+        <div className="city-search-wrap">
+          <form className="city-search" onSubmit={handleCitySubmit}>
+            <input
+              className="city-search__input"
+              type="text"
+              value={cityQuery}
+              onChange={(e) => setCityQuery(e.target.value)}
+              placeholder="Search a city or address…"
+              autoComplete="off"
+              autoFocus
+            />
+            <button
+              className="btn btn--primary city-search__submit"
+              type="submit"
+              disabled={cityLoading || !cityQuery.trim()}
+            >
+              {cityLoading ? '…' : 'Go'}
+            </button>
+          </form>
+          {citySuggestions.length > 0 && (
+            <ul className="city-suggestions">
+              {citySuggestions.map((place, i) => (
+                <li key={`${place.lat},${place.lng}-${i}`}>
+                  <button
+                    type="button"
+                    className="city-suggestions__item"
+                    onClick={() => handleSuggestionSelect(place)}
+                  >
+                    {place.label}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
       {citySearchOpen && cityError && (
         <div className="toast toast--error toast--compact" role="alert">

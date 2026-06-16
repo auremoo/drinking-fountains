@@ -24,13 +24,23 @@ body,
 #root {
   height: 100%;
   margin: 0;
+  overflow: hidden;
+}
+
+/* `position: fixed` is the reliable way to stop iOS Safari's rubber-band
+   page bounce; without it, one-finger panning on the map can also drag the
+   page itself even though there's nothing to scroll to. */
+html,
+body {
+  position: fixed;
+  width: 100%;
+  overscroll-behavior: none;
 }
 
 body {
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   color: var(--ink);
   background: var(--bg);
-  overscroll-behavior: none;
 }
 
 .app {
@@ -250,12 +260,15 @@ body {
 }
 
 /* ---- Place search ------------------------------------------------------ */
-.city-search {
+.city-search-wrap {
   position: absolute;
   top: calc(3.2rem + env(safe-area-inset-top, 0px));
   left: 1rem;
   right: 1rem;
   z-index: 1000;
+}
+
+.city-search {
   display: flex;
   gap: 0.5rem;
 }
@@ -272,6 +285,35 @@ body {
 
 .city-search__submit {
   flex-shrink: 0;
+}
+
+.city-suggestions {
+  list-style: none;
+  margin: 0.4rem 0 0;
+  padding: 0.3rem;
+  background: var(--surface);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.city-suggestions__item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 0.88rem;
+  padding: 0.6rem 0.7rem;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.city-suggestions__item:hover,
+.city-suggestions__item:active {
+  background: var(--bg);
 }
 
 /* ---- Bottom sheet ----------------------------------------------------- */
