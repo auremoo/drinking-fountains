@@ -20,6 +20,9 @@ const AUTO_SEARCH_HALF_DEG = 0.012
 /** Search a bbox of this half-width/height (degrees) around a manually-picked point. */
 const PICK_SEARCH_HALF_DEG = AUTO_SEARCH_HALF_DEG
 
+/** Delay after the map stops moving before auto-searching the new area. */
+const PAN_SEARCH_DEBOUNCE_MS = 600
+
 /**
  * Root application component.
  *
@@ -50,8 +53,8 @@ export default function App() {
   const [errorDismissed, setErrorDismissed] = useState(false)
   /** Position the map should animate to (recenter button / list selection). */
   const [flyTo, setFlyTo] = useState(null)
-  /** Latest map bounds, kept in a ref to avoid re-renders on every pan. */
-  const currentBbox = useRef(null)
+  /** Debounce timer for auto-searching after the map stops moving. */
+  const panSearchTimer = useRef(null)
   /** Ensures the automatic "near me" search only runs once. */
   const autoSearched = useRef(false)
   const [sheetOpen, setSheetOpen] = useState(false)
@@ -71,9 +74,20 @@ export default function App() {
     ])
   }, [gpsPosition, search])
 
-  const handleBoundsChange = useCallback((bbox) => {
-    currentBbox.current = bbox
-  }, [])
+  // Re-search automatically once the user stops panning/zooming, instead of
+  // requiring an explicit "search this area" button.
+  const handleBoundsChange = useCallback(
+    (bbox) => {
+      clearTimeout(panSearchTimer.current)
+      panSearchTimer.current = setTimeout(
+        () => search(bbox),
+        PAN_SEARCH_DEBOUNCE_MS,
+      )
+    },
+    [search],
+  )
+
+  useEffect(() => () => clearTimeout(panSearchTimer.current), [])
 
   const handleRecenter = useCallback(() => {
     setManualPosition(null) // go back to tracking GPS
@@ -81,10 +95,6 @@ export default function App() {
     locate() // called directly from this click handler so Safari shows the permission prompt
     if (gpsPosition) setFlyTo({ ...gpsPosition }) // new object ref re-triggers flyTo
   }, [locate, gpsPosition])
-
-  const handleSearchArea = useCallback(() => {
-    if (currentBbox.current) search(currentBbox.current)
-  }, [search])
 
   const handlePick = useCallback(
     (lat, lng) => {
@@ -243,13 +253,6 @@ export default function App() {
 
       <div className="controls">
         <button
-          className="btn btn--primary"
-          onClick={handleSearchArea}
-          disabled={loading}
-        >
-          {loading ? 'Searching…' : 'Search this area'}
-        </button>
-        <button
           className={
             citySearchOpen ? 'btn btn--icon btn--icon-active' : 'btn btn--icon'
           }
@@ -306,6 +309,7 @@ export default function App() {
 
       <FountainList
         fountains={fountains}
+        loading={loading}
         userPosition={position}
         open={sheetOpen}
         onToggle={() => setSheetOpen((o) => !o)}

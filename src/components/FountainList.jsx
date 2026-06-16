@@ -14,6 +14,7 @@ import { directionsUrl } from '../utils/directions.js'
  *
  * @param {Object} props
  * @param {Fountain[]} props.fountains - Fountains in the current area.
+ * @param {boolean} [props.loading] - True while a search is in flight.
  * @param {GeoPosition|null} props.userPosition - Used to compute distances.
  * @param {boolean} props.open - Whether the sheet is expanded.
  * @param {() => void} props.onToggle - Toggle the sheet open/closed.
@@ -21,6 +22,7 @@ import { directionsUrl } from '../utils/directions.js'
  */
 export default function FountainList({
   fountains,
+  loading,
   userPosition,
   open,
   onToggle,
@@ -42,7 +44,9 @@ export default function FountainList({
     <section className={`sheet ${open ? 'sheet--open' : ''}`} aria-label="Nearby fountains">
       <button className="sheet__handle" onClick={onToggle} aria-expanded={open}>
         <span className="sheet__grip" aria-hidden="true" />
-        {fountains.length} fountain{fountains.length === 1 ? '' : 's'} nearby
+        {loading
+          ? 'Searching…'
+          : `${fountains.length} fountain${fountains.length === 1 ? '' : 's'} nearby`}
       </button>
 
       <ul className="sheet__list">
