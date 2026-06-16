@@ -96,6 +96,36 @@ body {
   }
 }
 
+/* Strong drop shadow so fountain pins stay legible over busy OSM tiles. */
+.marker--fountain svg {
+  filter: drop-shadow(0 1px 3px rgba(15, 23, 42, 0.5));
+}
+
+/* Marker cluster bubbles ship green/yellow/orange by default
+   (leaflet.markercluster's MarkerCluster.Default.css); override them to the
+   app's blue palette so they read clearly against the busy OSM tiles. */
+.marker-cluster-small {
+  background-color: rgba(14, 165, 233, 0.35) !important;
+}
+.marker-cluster-small div {
+  background-color: rgba(14, 165, 233, 0.85) !important;
+  color: #fff !important;
+}
+.marker-cluster-medium {
+  background-color: rgba(2, 132, 199, 0.4) !important;
+}
+.marker-cluster-medium div {
+  background-color: rgba(2, 132, 199, 0.9) !important;
+  color: #fff !important;
+}
+.marker-cluster-large {
+  background-color: rgba(7, 89, 133, 0.45) !important;
+}
+.marker-cluster-large div {
+  background-color: rgba(7, 89, 133, 0.95) !important;
+  color: #fff !important;
+}
+
 .popup-distance {
   color: var(--muted);
   font-size: 0.85rem;
@@ -181,6 +211,67 @@ body {
   background: var(--surface);
   color: var(--blue-dark);
   border: 1px solid #bae6fd;
+}
+
+/* Compact toasts (errors, hints) sit closer to the controls and stay short
+   so they don't eat into the map. */
+.toast--compact {
+  bottom: calc(5rem + var(--safe-bottom));
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.82rem;
+  line-height: 1.25;
+  padding: 0.5rem 0.5rem 0.5rem 0.8rem;
+}
+
+.toast--compact span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.toast__dismiss {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 0.1rem 0.3rem;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.6;
+}
+
+.toast__dismiss:hover {
+  opacity: 1;
+}
+
+/* ---- Place search ------------------------------------------------------ */
+.city-search {
+  position: absolute;
+  top: calc(3.2rem + env(safe-area-inset-top, 0px));
+  left: 1rem;
+  right: 1rem;
+  z-index: 1000;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.city-search__input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  border-radius: 999px;
+  padding: 0.7rem 1rem;
+  font: inherit;
+  box-shadow: var(--shadow);
+}
+
+.city-search__submit {
+  flex-shrink: 0;
 }
 
 /* ---- Bottom sheet ----------------------------------------------------- */

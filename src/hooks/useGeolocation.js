@@ -16,7 +16,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
  */
 
 const ERROR_MESSAGES = {
-  1: 'Location permission denied. Enable it to find fountains near you.',
+  1: 'Location blocked for this site. On iPhone: Settings > Privacy & Security > Location Services > Safari Websites, or tap the "aA" icon in the address bar > Website Settings. Then retry, or set your location manually below.',
   2: 'Your position is currently unavailable.',
   3: 'Timed out while locating you.',
 }
@@ -43,15 +43,21 @@ export function useGeolocation() {
   const [loading, setLoading] = useState(true)
   const watchId = useRef(null)
 
-  const locate = useCallback(() => {
+  /**
+   * @param {{ silent?: boolean }} [opts] - When `silent` is true, failures are
+   *   not surfaced as `error` (used for the best-effort attempt on first
+   *   load, which Safari may legitimately ignore since it has no user
+   *   gesture behind it - that's not worth alarming the user about).
+   */
+  const locate = useCallback(({ silent = false } = {}) => {
     if (!('geolocation' in navigator)) {
-      setError('Geolocation is not supported by this device.')
+      if (!silent) setError('Geolocation is not supported by this device.')
       setLoading(false)
       return
     }
 
     setLoading(true)
-    setError(null)
+    if (!silent) setError(null)
 
     if (watchId.current != null) {
       navigator.geolocation.clearWatch(watchId.current)
@@ -68,18 +74,18 @@ export function useGeolocation() {
         setError(null)
       },
       (err) => {
-        setError(ERROR_MESSAGES[err.code] ?? err.message)
+        if (!silent) setError(ERROR_MESSAGES[err.code] ?? err.message)
         setLoading(false)
       },
       { enableHighAccuracy: true, maximumAge: 10000, timeout: 15000 },
     )
   }, [])
 
-  // Best-effort automatic fix on first load (no user gesture, so Safari may
-  // not prompt here if permission was never decided - that's what the
-  // explicit "locate" button/gesture is for).
+  // Best-effort silent fix on first load: works if permission was already
+  // granted on a previous visit, and stays quiet otherwise. The explicit
+  // "use my GPS location" button is what triggers the real prompt/error.
   useEffect(() => {
-    locate()
+    locate({ silent: true })
     return () => {
       if (watchId.current != null) navigator.geolocation.clearWatch(watchId.current)
     }

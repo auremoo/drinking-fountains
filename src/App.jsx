@@ -3,6 +3,7 @@ import MapView from './components/MapView.jsx'
 import FountainList from './components/FountainList.jsx'
 import { useGeolocation } from './hooks/useGeolocation.js'
 import { useFountains } from './hooks/useFountains.js'
+import { geocodePlace } from './services/geocode.js'
 
 /**
  * Half-width/height (in degrees) of the bounding box used for the first
@@ -28,10 +29,17 @@ export default function App() {
   const { position: gpsPosition, error: geoError, locate } = useGeolocation()
   const { fountains, loading, error: dataError, search } = useFountains()
 
-  /** Position chosen by tapping the map, overriding the GPS fix until cleared. */
+  /** Position chosen by tapping the map or searching a place, overriding the GPS fix until cleared. */
   const [manualPosition, setManualPosition] = useState(null)
   /** True while the user is asked to tap the map to set their location. */
   const [pickMode, setPickMode] = useState(false)
+  /** Whether the "search a place" input is shown. */
+  const [citySearchOpen, setCitySearchOpen] = useState(false)
+  const [cityQuery, setCityQuery] = useState('')
+  const [cityError, setCityError] = useState(null)
+  const [cityLoading, setCityLoading] = useState(false)
+  /** True once the user has dismissed the current geolocation error toast. */
+  const [errorDismissed, setErrorDismissed] = useState(false)
   /** Position the map should animate to (recenter button / list selection). */
   const [flyTo, setFlyTo] = useState(null)
   /** Latest map bounds, kept in a ref to avoid re-renders on every pan. */
@@ -61,6 +69,7 @@ export default function App() {
 
   const handleRecenter = useCallback(() => {
     setManualPosition(null) // go back to tracking GPS
+    setErrorDismissed(false)
     locate() // called directly from this click handler so Safari shows the permission prompt
     if (gpsPosition) setFlyTo({ ...gpsPosition }) // new object ref re-triggers flyTo
   }, [locate, gpsPosition])
@@ -72,6 +81,7 @@ export default function App() {
   const handlePick = useCallback(
     (lat, lng) => {
       setPickMode(false)
+      setCitySearchOpen(false)
       setManualPosition({ lat, lng, accuracy: 0 })
       setFlyTo({ lat, lng })
       search([
@@ -84,12 +94,40 @@ export default function App() {
     [search],
   )
 
+  const handleCitySubmit = useCallback(
+    async (e) => {
+      e.preventDefault()
+      setCityLoading(true)
+      setCityError(null)
+      try {
+        const { lat, lng } = await geocodePlace(cityQuery)
+        handlePick(lat, lng)
+        setCityQuery('')
+      } catch (err) {
+        setCityError(err.message)
+      } finally {
+        setCityLoading(false)
+      }
+    },
+    [cityQuery, handlePick],
+  )
+
   const handleSelect = useCallback((fountain) => {
     setFlyTo({ lat: fountain.lat, lng: fountain.lng, accuracy: 0 })
     setSheetOpen(false)
   }, [])
 
-  const error = dataError || geoError
+  // Once a manual location (pin or city) is active, a stale GPS error isn't
+  // relevant anymore - the app is working via the alternative the user chose.
+  const rawError = dataError || (!manualPosition && geoError) || null
+
+  // Re-show the toast whenever the underlying error actually changes, even
+  // if the user dismissed a previous one.
+  useEffect(() => {
+    setErrorDismissed(false)
+  }, [rawError])
+
+  const error = !errorDismissed && rawError
 
   return (
     <div className="app">
@@ -108,6 +146,38 @@ export default function App() {
         onPick={handlePick}
       />
 
+      {citySearchOpen && (
+        <form className="city-search" onSubmit={handleCitySubmit}>
+          <input
+            className="city-search__input"
+            type="text"
+            value={cityQuery}
+            onChange={(e) => setCityQuery(e.target.value)}
+            placeholder="Search a city or address…"
+            autoFocus
+          />
+          <button
+            className="btn btn--primary city-search__submit"
+            type="submit"
+            disabled={cityLoading || !cityQuery.trim()}
+          >
+            {cityLoading ? '…' : 'Go'}
+          </button>
+        </form>
+      )}
+      {citySearchOpen && cityError && (
+        <div className="toast toast--error toast--compact" role="alert">
+          <span>{cityError}</span>
+          <button
+            className="toast__dismiss"
+            onClick={() => setCityError(null)}
+            aria-label="Dismiss"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
       <div className="controls">
         <button
           className="btn btn--primary"
@@ -118,9 +188,25 @@ export default function App() {
         </button>
         <button
           className={
+            citySearchOpen ? 'btn btn--icon btn--icon-active' : 'btn btn--icon'
+          }
+          onClick={() => {
+            setCitySearchOpen((on) => !on)
+            setPickMode(false)
+          }}
+          aria-label="Search a city"
+          title="Search a city"
+        >
+          🔎
+        </button>
+        <button
+          className={
             pickMode ? 'btn btn--icon btn--icon-active' : 'btn btn--icon'
           }
-          onClick={() => setPickMode((on) => !on)}
+          onClick={() => {
+            setPickMode((on) => !on)
+            setCitySearchOpen(false)
+          }}
           aria-label="Choose location on the map"
           title="Choose location on the map"
         >
@@ -137,12 +223,23 @@ export default function App() {
       </div>
 
       {pickMode && (
-        <div className="toast toast--info" role="status">
+        <div className="toast toast--info toast--compact" role="status">
           Tap the map to set your location
         </div>
       )}
 
-      {error && <div className="toast toast--error" role="alert">{error}</div>}
+      {error && (
+        <div className="toast toast--error toast--compact" role="alert">
+          <span>{error}</span>
+          <button
+            className="toast__dismiss"
+            onClick={() => setErrorDismissed(true)}
+            aria-label="Dismiss"
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       <FountainList
         fountains={fountains}
