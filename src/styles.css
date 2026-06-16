@@ -68,6 +68,10 @@ body {
   z-index: 0;
 }
 
+.map--picking {
+  cursor: crosshair;
+}
+
 /* User location marker (pulsing dot). */
 .marker--user .user-dot {
   display: block;
@@ -148,6 +152,11 @@ body {
   place-items: center;
 }
 
+.btn--icon-active {
+  background: var(--blue);
+  color: #fff;
+}
+
 /* ---- Toast ------------------------------------------------------------ */
 .toast {
   position: absolute;
@@ -166,6 +175,12 @@ body {
   background: #fef2f2;
   color: var(--danger);
   border: 1px solid #fecaca;
+}
+
+.toast--info {
+  background: var(--surface);
+  color: var(--blue-dark);
+  border: 1px solid #bae6fd;
 }
 
 /* ---- Bottom sheet ----------------------------------------------------- */

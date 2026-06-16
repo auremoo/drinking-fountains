@@ -49,6 +49,22 @@ function BoundsReporter({ onMoved }) {
 }
 
 /**
+ * While {@link pickMode} is active, reports the lat/lng of the user's next
+ * map tap so it can be used as a manual location (for devices/browsers where
+ * GPS is unavailable or permission was refused).
+ *
+ * @param {{ pickMode: boolean, onPick: (lat: number, lng: number) => void }} props
+ */
+function LocationPicker({ pickMode, onPick }) {
+  useMapEvents({
+    click: (e) => {
+      if (pickMode) onPick(e.latlng.lat, e.latlng.lng)
+    },
+  })
+  return null
+}
+
+/**
  * The full-screen interactive map: OSM tiles, the user's location, an accuracy
  * halo and clustered fountain markers with detail popups.
  *
@@ -58,12 +74,18 @@ function BoundsReporter({ onMoved }) {
  * @param {GeoPosition|null} props.flyTo - Target the map should animate to.
  * @param {(bbox: [number, number, number, number]) => void} props.onBoundsChange
  *   - Called with the new bounds whenever the user moves the map.
+ * @param {boolean} [props.pickMode] - When true, the next map tap is reported
+ *   via `onPick` instead of opening a popup.
+ * @param {(lat: number, lng: number) => void} [props.onPick] - Called with the
+ *   tapped coordinates while `pickMode` is active.
  */
 export default function MapView({
   fountains,
   userPosition,
   flyTo,
   onBoundsChange,
+  pickMode = false,
+  onPick,
 }) {
   // Default view: Paris, until we get a real fix. Chosen because OSM fountain
   // coverage there is excellent, so the empty state still looks alive.
@@ -76,7 +98,7 @@ export default function MapView({
       center={initialCenter}
       zoom={userPosition ? 16 : 13}
       zoomControl={false}
-      className="map"
+      className={pickMode ? 'map map--picking' : 'map'}
     >
       <TileLayer
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -86,6 +108,7 @@ export default function MapView({
 
       <RecenterOnChange center={flyTo} />
       <BoundsReporter onMoved={onBoundsChange} />
+      <LocationPicker pickMode={pickMode} onPick={onPick} />
 
       {userPosition && (
         <>

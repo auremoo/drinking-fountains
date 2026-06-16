@@ -11,19 +11,27 @@ import { useFountains } from './hooks/useFountains.js'
  */
 const AUTO_SEARCH_HALF_DEG = 0.012
 
+/** Search a bbox of this half-width/height (degrees) around a manually-picked point. */
+const PICK_SEARCH_HALF_DEG = AUTO_SEARCH_HALF_DEG
+
 /**
  * Root application component.
  *
  * Responsibilities:
  *  - wires geolocation and the fountain dataset together,
  *  - performs one automatic search around the user on first fix,
- *  - exposes "recenter on me" and "search this area" controls,
+ *  - exposes "recenter on me", "choose location on map" and "search this
+ *    area" controls,
  *  - coordinates the map view and the bottom-sheet list.
  */
 export default function App() {
-  const { position, error: geoError, locate } = useGeolocation()
+  const { position: gpsPosition, error: geoError, locate } = useGeolocation()
   const { fountains, loading, error: dataError, search } = useFountains()
 
+  /** Position chosen by tapping the map, overriding the GPS fix until cleared. */
+  const [manualPosition, setManualPosition] = useState(null)
+  /** True while the user is asked to tap the map to set their location. */
+  const [pickMode, setPickMode] = useState(false)
   /** Position the map should animate to (recenter button / list selection). */
   const [flyTo, setFlyTo] = useState(null)
   /** Latest map bounds, kept in a ref to avoid re-renders on every pan. */
@@ -32,31 +40,49 @@ export default function App() {
   const autoSearched = useRef(false)
   const [sheetOpen, setSheetOpen] = useState(false)
 
+  const position = manualPosition ?? gpsPosition
+
   // On the first GPS fix: center the map and search the surrounding area.
   useEffect(() => {
-    if (!position || autoSearched.current) return
+    if (!gpsPosition || autoSearched.current) return
     autoSearched.current = true
-    setFlyTo({ ...position })
+    setFlyTo({ ...gpsPosition })
     search([
-      position.lat - AUTO_SEARCH_HALF_DEG,
-      position.lng - AUTO_SEARCH_HALF_DEG,
-      position.lat + AUTO_SEARCH_HALF_DEG,
-      position.lng + AUTO_SEARCH_HALF_DEG,
+      gpsPosition.lat - AUTO_SEARCH_HALF_DEG,
+      gpsPosition.lng - AUTO_SEARCH_HALF_DEG,
+      gpsPosition.lat + AUTO_SEARCH_HALF_DEG,
+      gpsPosition.lng + AUTO_SEARCH_HALF_DEG,
     ])
-  }, [position, search])
+  }, [gpsPosition, search])
 
   const handleBoundsChange = useCallback((bbox) => {
     currentBbox.current = bbox
   }, [])
 
   const handleRecenter = useCallback(() => {
-    locate()
-    if (position) setFlyTo({ ...position }) // new object ref re-triggers flyTo
-  }, [locate, position])
+    setManualPosition(null) // go back to tracking GPS
+    locate() // called directly from this click handler so Safari shows the permission prompt
+    if (gpsPosition) setFlyTo({ ...gpsPosition }) // new object ref re-triggers flyTo
+  }, [locate, gpsPosition])
 
   const handleSearchArea = useCallback(() => {
     if (currentBbox.current) search(currentBbox.current)
   }, [search])
+
+  const handlePick = useCallback(
+    (lat, lng) => {
+      setPickMode(false)
+      setManualPosition({ lat, lng, accuracy: 0 })
+      setFlyTo({ lat, lng })
+      search([
+        lat - PICK_SEARCH_HALF_DEG,
+        lng - PICK_SEARCH_HALF_DEG,
+        lat + PICK_SEARCH_HALF_DEG,
+        lng + PICK_SEARCH_HALF_DEG,
+      ])
+    },
+    [search],
+  )
 
   const handleSelect = useCallback((fountain) => {
     setFlyTo({ lat: fountain.lat, lng: fountain.lng, accuracy: 0 })
@@ -78,6 +104,8 @@ export default function App() {
         userPosition={position}
         flyTo={flyTo}
         onBoundsChange={handleBoundsChange}
+        pickMode={pickMode}
+        onPick={handlePick}
       />
 
       <div className="controls">
@@ -89,14 +117,30 @@ export default function App() {
           {loading ? 'Searching…' : 'Search this area'}
         </button>
         <button
+          className={
+            pickMode ? 'btn btn--icon btn--icon-active' : 'btn btn--icon'
+          }
+          onClick={() => setPickMode((on) => !on)}
+          aria-label="Choose location on the map"
+          title="Choose location on the map"
+        >
+          📍
+        </button>
+        <button
           className="btn btn--icon"
           onClick={handleRecenter}
-          aria-label="Recenter on my location"
-          title="Recenter on my location"
+          aria-label="Use my GPS location"
+          title="Use my GPS location"
         >
           ◎
         </button>
       </div>
+
+      {pickMode && (
+        <div className="toast toast--info" role="status">
+          Tap the map to set your location
+        </div>
+      )}
 
       {error && <div className="toast toast--error" role="alert">{error}</div>}
 
