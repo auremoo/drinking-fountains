@@ -1,0 +1,261 @@
+/*
+ * Global styles. Mobile-first; the layout is a full-viewport map with floating
+ * controls and a draggable-feel bottom sheet. Colors use a water-blue palette.
+ */
+
+:root {
+  --blue: #0ea5e9;
+  --blue-dark: #0284c7;
+  --ink: #0f172a;
+  --bg: #f0f9ff;
+  --surface: #ffffff;
+  --muted: #64748b;
+  --danger: #dc2626;
+  --shadow: 0 6px 24px rgba(15, 23, 42, 0.18);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  color: var(--ink);
+  background: var(--bg);
+  overscroll-behavior: none;
+}
+
+.app {
+  position: relative;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* ---- Top bar ---------------------------------------------------------- */
+.topbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  padding: 0.6rem 1rem;
+  padding-top: calc(0.6rem + env(safe-area-inset-top, 0px));
+  background: linear-gradient(180deg, rgba(240, 249, 255, 0.95), transparent);
+  pointer-events: none;
+}
+
+.topbar__title {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--blue-dark);
+}
+
+/* ---- Map -------------------------------------------------------------- */
+.map {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+}
+
+/* User location marker (pulsing dot). */
+.marker--user .user-dot {
+  display: block;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--blue);
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 rgba(14, 165, 233, 0.6);
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 16px rgba(14, 165, 233, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(14, 165, 233, 0);
+  }
+}
+
+.popup-distance {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin: 0.2rem 0;
+}
+
+.popup-directions,
+.fountain-item__go {
+  display: inline-block;
+  color: var(--blue-dark);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+/* ---- Floating controls ----------------------------------------------- */
+.controls {
+  position: absolute;
+  right: 1rem;
+  bottom: calc(5rem + var(--safe-bottom));
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  align-items: flex-end;
+}
+
+.btn {
+  border: none;
+  border-radius: 999px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+
+.btn--primary {
+  background: var(--blue);
+  color: #fff;
+  padding: 0.7rem 1.1rem;
+}
+
+.btn--primary:disabled {
+  background: var(--muted);
+  cursor: progress;
+}
+
+.btn--icon {
+  width: 48px;
+  height: 48px;
+  font-size: 1.4rem;
+  background: var(--surface);
+  color: var(--blue-dark);
+  display: grid;
+  place-items: center;
+}
+
+/* ---- Toast ------------------------------------------------------------ */
+.toast {
+  position: absolute;
+  left: 50%;
+  bottom: calc(9rem + var(--safe-bottom));
+  transform: translateX(-50%);
+  z-index: 1100;
+  max-width: 90%;
+  padding: 0.7rem 1rem;
+  border-radius: 12px;
+  font-size: 0.9rem;
+  box-shadow: var(--shadow);
+}
+
+.toast--error {
+  background: #fef2f2;
+  color: var(--danger);
+  border: 1px solid #fecaca;
+}
+
+/* ---- Bottom sheet ----------------------------------------------------- */
+.sheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1050;
+  background: var(--surface);
+  border-radius: 20px 20px 0 0;
+  box-shadow: var(--shadow);
+  transform: translateY(calc(100% - 3.2rem));
+  transition: transform 0.28s ease;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: var(--safe-bottom);
+}
+
+.sheet--open {
+  transform: translateY(0);
+}
+
+.sheet__handle {
+  width: 100%;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-weight: 600;
+  color: var(--ink);
+  padding: 0.9rem 1rem 0.6rem;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.sheet__grip {
+  width: 40px;
+  height: 4px;
+  border-radius: 2px;
+  background: #cbd5e1;
+}
+
+.sheet__list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0.5rem 0.5rem;
+  overflow-y: auto;
+}
+
+.sheet__empty {
+  color: var(--muted);
+  text-align: center;
+  padding: 1.5rem 1rem;
+}
+
+.fountain-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.fountain-item__main {
+  flex: 1;
+  text-align: left;
+  border: none;
+  background: transparent;
+  font: inherit;
+  padding: 0.8rem 0.6rem;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.fountain-item__name {
+  font-weight: 600;
+}
+
+.fountain-item__meta {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.fountain-item__go {
+  padding: 0.6rem 0.9rem;
+  border-radius: 999px;
+  background: var(--bg);
+}

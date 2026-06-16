@@ -1,0 +1,29 @@
+{
+  "name": "drinking-fountains",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A mobile-first, installable PWA that maps publicly available drinking-water fountains around you, sourced from OpenStreetMap.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint . --ext js,jsx"
+  },
+  "dependencies": {
+    "leaflet": "^1.9.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-leaflet": "^4.2.1",
+    "react-leaflet-cluster": "^2.1.0"
+  },
+  "devDependencies": {
+    "@types/leaflet": "^1.9.12",
+    "@vitejs/plugin-react": "^4.3.1",
+    "eslint": "^8.57.0",
+    "eslint-plugin-react": "^7.35.0",
+    "eslint-plugin-react-hooks": "^4.6.2",
+    "vite": "^5.4.0",
+    "vite-plugin-pwa": "^0.20.5"
+  }
+}
