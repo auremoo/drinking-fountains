@@ -113,9 +113,14 @@ export default function App() {
       const controller = new AbortController()
       citySuggestAbortRef.current = controller
       searchPlaces(cityQuery, controller.signal)
-        .then(setCitySuggestions)
+        .then((results) => {
+          setCitySuggestions(results)
+          setCityError(null)
+        })
         .catch((err) => {
-          if (err.name !== 'AbortError') setCitySuggestions([])
+          if (err.name === 'AbortError') return
+          setCitySuggestions([])
+          setCityError(err.message)
         })
     }, CITY_SUGGEST_DEBOUNCE_MS)
     return () => clearTimeout(timer)

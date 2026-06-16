@@ -1,19 +1,23 @@
 /**
- * Forward geocoding (place name -> coordinates) via the public OSM Nominatim
- * API, so users can type a city instead of relying on GPS or tapping the map.
+ * Forward geocoding (place name -> coordinates), so users can type a city
+ * instead of relying on GPS or tapping the map.
+ *
+ * Two independent public providers are tried in order, the same fallback
+ * approach used for Overpass: a single provider being unreachable (down,
+ * rate-limiting, or blocked for a given network) shouldn't break the feature.
  *
  * @module services/geocode
  * @see https://nominatim.org/release-docs/latest/api/Search/
+ * @see https://photon.komoot.io/
  */
-
-const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search'
 
 /**
- * Network timeout, in milliseconds. Without this, a slow or unresponsive
- * Nominatim response leaves the caller awaiting a promise that never settles
- * - the UI would show "searching" forever instead of failing visibly.
+ * Network timeout per provider, in milliseconds. Without this, a slow or
+ * unresponsive response leaves the caller awaiting a promise that never
+ * settles - the UI would show "searching" forever instead of failing
+ * visibly or falling back to the next provider.
  */
-const TIMEOUT_MS = 10000
+const TIMEOUT_MS = 8000
 
 /**
  * @typedef {Object} GeocodeResult
@@ -21,6 +25,36 @@ const TIMEOUT_MS = 10000
  * @property {number} lng
  * @property {string} label - Human-readable place name, for display/confirmation.
  */
+
+const PROVIDERS = [
+  {
+    buildUrl: (q, limit) =>
+      `https://nominatim.openstreetmap.org/search?format=json&limit=${limit}&q=${encodeURIComponent(q)}`,
+    parse: (json) =>
+      json.map((r) => ({
+        lat: parseFloat(r.lat),
+        lng: parseFloat(r.lon),
+        label: r.display_name,
+      })),
+  },
+  {
+    buildUrl: (q, limit) =>
+      `https://photon.komoot.io/api/?limit=${limit}&q=${encodeURIComponent(q)}`,
+    parse: (json) =>
+      (json.features ?? []).map((f) => ({
+        lat: f.geometry.coordinates[1],
+        lng: f.geometry.coordinates[0],
+        label: [
+          f.properties.name,
+          f.properties.city,
+          f.properties.state,
+          f.properties.country,
+        ]
+          .filter(Boolean)
+          .join(', '),
+      })),
+  },
+]
 
 /**
  * Fetch JSON from `url`, aborting after {@link TIMEOUT_MS} or when the
@@ -41,7 +75,7 @@ async function fetchJson(url, signal) {
       signal: controller.signal,
       headers: { Accept: 'application/json' },
     })
-    if (!res.ok) throw new Error(`Place search failed (HTTP ${res.status}).`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
     return await res.json()
   } finally {
     clearTimeout(timer)
@@ -56,18 +90,26 @@ async function fetchJson(url, signal) {
  * @param {AbortSignal} [signal]
  * @param {number} [limit] - Max number of suggestions.
  * @returns {Promise<GeocodeResult[]>} Empty when `query` is blank or nothing matches.
+ * @throws {Error} When every provider fails (network/CORS/timeout) - as
+ *   opposed to a provider succeeding with zero matches, which resolves to `[]`.
  */
 export async function searchPlaces(query, signal, limit = 5) {
   const q = query.trim()
   if (!q) return []
 
-  const url = `${NOMINATIM_URL}?format=json&limit=${limit}&q=${encodeURIComponent(q)}`
-  const results = await fetchJson(url, signal)
-  return results.map((r) => ({
-    lat: parseFloat(r.lat),
-    lng: parseFloat(r.lon),
-    label: r.display_name,
-  }))
+  let lastError
+  for (const provider of PROVIDERS) {
+    try {
+      const json = await fetchJson(provider.buildUrl(q, limit), signal)
+      return provider.parse(json)
+    } catch (err) {
+      if (signal?.aborted) throw err
+      lastError = err
+    }
+  }
+  throw new Error(
+    `Place search is unreachable right now. ${lastError?.message ?? ''}`.trim(),
+  )
 }
 
 /**
@@ -76,7 +118,7 @@ export async function searchPlaces(query, signal, limit = 5) {
  * @param {string} query
  * @param {AbortSignal} [signal]
  * @returns {Promise<GeocodeResult>}
- * @throws {Error} When the query is empty, the request fails, or no place matches.
+ * @throws {Error} When the query is empty, every provider fails, or no place matches.
  */
 export async function geocodePlace(query, signal) {
   const [match] = await searchPlaces(query, signal, 1)
