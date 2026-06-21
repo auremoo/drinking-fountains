@@ -18,15 +18,14 @@
 const ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
-  'https://overpass.openstreetmap.ru/api/interpreter',
 ]
 
 /**
- * Per-endpoint network timeout, in milliseconds. Without this, a single slow
- * or unresponsive mirror can hang the whole search instead of falling back.
+ * Per-endpoint network timeout, in milliseconds. Kept short so failure is
+ * visible quickly rather than after a 30+ second wait (num_endpoints × timeout).
  * @type {number}
  */
-const ENDPOINT_TIMEOUT_MS = 12000
+const ENDPOINT_TIMEOUT_MS = 7000
 
 /**
  * A normalized drinking-water fountain.

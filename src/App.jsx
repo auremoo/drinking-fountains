@@ -55,6 +55,9 @@ export default function App() {
   const [flyTo, setFlyTo] = useState(null)
   /** Debounce timer for auto-searching after the map stops moving. */
   const panSearchTimer = useRef(null)
+  /** Set to true when we programmatically fly the map so the next moveend
+   *  doesn't cancel the explicit search we already started for that location. */
+  const suppressNextPanSearch = useRef(false)
   /** Ensures the automatic "near me" search only runs once. */
   const autoSearched = useRef(false)
   const [sheetOpen, setSheetOpen] = useState(false)
@@ -65,6 +68,7 @@ export default function App() {
   useEffect(() => {
     if (!gpsPosition || autoSearched.current) return
     autoSearched.current = true
+    suppressNextPanSearch.current = true
     setFlyTo({ ...gpsPosition })
     search([
       gpsPosition.lat - AUTO_SEARCH_HALF_DEG,
@@ -74,10 +78,16 @@ export default function App() {
     ])
   }, [gpsPosition, search])
 
-  // Re-search automatically once the user stops panning/zooming, instead of
-  // requiring an explicit "search this area" button.
+  // Re-search automatically once the user stops panning/zooming.
+  // When we programmatically fly the map (GPS fix, pin drop, city search) we
+  // set suppressNextPanSearch so the resulting moveend doesn't abort and
+  // restart the explicit search we already kicked off for that location.
   const handleBoundsChange = useCallback(
     (bbox) => {
+      if (suppressNextPanSearch.current) {
+        suppressNextPanSearch.current = false
+        return
+      }
       clearTimeout(panSearchTimer.current)
       panSearchTimer.current = setTimeout(
         () => search(bbox),
@@ -90,10 +100,13 @@ export default function App() {
   useEffect(() => () => clearTimeout(panSearchTimer.current), [])
 
   const handleRecenter = useCallback(() => {
-    setManualPosition(null) // go back to tracking GPS
+    setManualPosition(null)
     setErrorDismissed(false)
-    locate() // called directly from this click handler so Safari shows the permission prompt
-    if (gpsPosition) setFlyTo({ ...gpsPosition }) // new object ref re-triggers flyTo
+    locate()
+    if (gpsPosition) {
+      suppressNextPanSearch.current = true
+      setFlyTo({ ...gpsPosition })
+    }
   }, [locate, gpsPosition])
 
   const handlePick = useCallback(
@@ -101,6 +114,7 @@ export default function App() {
       setPickMode(false)
       setCitySearchOpen(false)
       setManualPosition({ lat, lng, accuracy: 0 })
+      suppressNextPanSearch.current = true
       setFlyTo({ lat, lng })
       search([
         lat - PICK_SEARCH_HALF_DEG,
