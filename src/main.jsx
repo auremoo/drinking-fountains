@@ -1,3 +1,4 @@
+// Drinking Fountains — Auteur : Aurélien Moote - Moo - 2026 — Licence MIT
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.jsx'

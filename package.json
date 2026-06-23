@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "description": "A mobile-first, installable PWA that maps publicly available drinking-water fountains around you, sourced from OpenStreetMap.",
+  "author": "Aurélien Moote - Moo - 2026",
   "type": "module",
   "scripts": {
     "dev": "vite",

@@ -1,3 +1,4 @@
+// Drinking Fountains — Auteur : Aurélien Moote - Moo - 2026 — Licence MIT
 import { useCallback, useEffect, useRef, useState } from 'react'
 import MapView from './components/MapView.jsx'
 import FountainList from './components/FountainList.jsx'

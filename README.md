@@ -1,3 +1,6 @@
+> Créé par **Aurélien Moote - Moo - 2026**. Logiciel libre (licence MIT) :
+> réutilisable à condition de conserver la mention de l'auteur.
+
 # 💧 Drinking Fountains
 
 A mobile-first, **installable PWA** that shows the publicly available
@@ -93,6 +96,17 @@ with `amenity=drinking_water` and it will appear here.
 - Offline data caching (last viewed fountains + tiles) for fully offline use.
 - Filters (wheelchair access, bottle-fill suitable, fee).
 - Crowd-sourced status reports (working / out of order).
+
+## Auteur & licence
+
+**Aurélien Moote - Moo - 2026**
+Copyright (c) 2026 Aurélien Moote ("Moo") — https://github.com/auremoo/drinking-fountains
+
+Logiciel libre distribué sous licence **MIT** — voir [`LICENSE`](LICENSE).
+Réutilisable à condition de conserver la mention de l'auteur.
+
+Note : les *données* cartographiques servies par l'app sont sous ODbL
+(OpenStreetMap contributors), indépendante de la licence MIT du code source.
 
 ## License
 
