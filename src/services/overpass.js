@@ -11,21 +11,24 @@
  */
 
 /**
- * Public Overpass endpoints. We try them in order so a single overloaded
- * mirror does not break the app.
+ * Public Overpass endpoints. Queried in parallel (see {@link fetchFountains})
+ * and raced against each other, so an overloaded mirror - overpass-api.de in
+ * particular has had recurring slow-response periods - can't delay the whole
+ * search when another mirror answers promptly.
  * @type {string[]}
  */
 const ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
 ]
 
 /**
- * Per-endpoint network timeout, in milliseconds. Kept short so failure is
- * visible quickly rather than after a 30+ second wait (num_endpoints × timeout).
+ * Per-endpoint network timeout, in milliseconds. Endpoints race in parallel,
+ * so this bounds the worst case rather than stacking per mirror.
  * @type {number}
  */
-const ENDPOINT_TIMEOUT_MS = 7000
+const ENDPOINT_TIMEOUT_MS = 10000
 
 /**
  * A normalized drinking-water fountain.
@@ -96,7 +99,42 @@ function normalize(el) {
 }
 
 /**
+ * Query a single Overpass mirror, aborting after {@link ENDPOINT_TIMEOUT_MS}
+ * or when the caller's `signal` aborts, whichever comes first.
+ *
+ * @param {string} endpoint
+ * @param {string} body - URL-encoded request body.
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<Fountain[]>}
+ */
+async function fetchFromEndpoint(endpoint, body, signal) {
+  const timeoutController = new AbortController()
+  const timer = setTimeout(() => timeoutController.abort(), ENDPOINT_TIMEOUT_MS)
+  const onAbort = () => timeoutController.abort()
+  signal?.addEventListener('abort', onAbort)
+
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+      signal: timeoutController.signal,
+    })
+    if (!res.ok) throw new Error(`Overpass HTTP ${res.status}`)
+    const json = await res.json()
+    return (json.elements ?? []).map(normalize).filter(Boolean)
+  } finally {
+    clearTimeout(timer)
+    signal?.removeEventListener('abort', onAbort)
+  }
+}
+
+/**
  * Fetch drinking-water fountains within the given bounding box.
+ *
+ * All mirrors in {@link ENDPOINTS} are queried in parallel and the first
+ * successful response wins, so one overloaded/slow mirror can't delay the
+ * whole search when another answers promptly.
  *
  * @param {[number, number, number, number]} bbox - `[south, west, north, east]`.
  * @param {AbortSignal} [signal] - Optional signal to cancel an in-flight request.
@@ -105,38 +143,18 @@ function normalize(el) {
  */
 export async function fetchFountains(bbox, signal) {
   const body = `data=${encodeURIComponent(buildQuery(bbox))}`
-  let lastError
 
-  for (const endpoint of ENDPOINTS) {
-    // Race each mirror against its own timeout so a slow/unresponsive server
-    // can't stall the whole search; the caller's signal still cancels everything.
-    const timeoutController = new AbortController()
-    const timer = setTimeout(
-      () => timeoutController.abort(),
-      ENDPOINT_TIMEOUT_MS,
+  try {
+    return await Promise.any(
+      ENDPOINTS.map((endpoint) => fetchFromEndpoint(endpoint, body, signal)),
     )
-    const onAbort = () => timeoutController.abort()
-    signal?.addEventListener('abort', onAbort)
-
-    try {
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body,
-        signal: timeoutController.signal,
-      })
-      if (!res.ok) throw new Error(`Overpass HTTP ${res.status}`)
-      const json = await res.json()
-      return (json.elements ?? []).map(normalize).filter(Boolean)
-    } catch (err) {
-      if (signal?.aborted) throw err // caller cancelled; not a per-endpoint failure
-      lastError = err
-    } finally {
-      clearTimeout(timer)
-      signal?.removeEventListener('abort', onAbort)
+  } catch (err) {
+    if (signal?.aborted) {
+      const abortError = new Error('Aborted')
+      abortError.name = 'AbortError'
+      throw abortError // caller cancelled; not a real failure
     }
+    const reasons = (err.errors ?? [err]).map((e) => e.message).join('; ')
+    throw new Error(`Could not reach any Overpass server. ${reasons}`.trim())
   }
-  throw new Error(
-    `Could not reach any Overpass server. ${lastError?.message ?? ''}`.trim(),
-  )
 }
