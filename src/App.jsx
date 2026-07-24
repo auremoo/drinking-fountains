@@ -1,99 +1,120 @@
 // Drinking Fountains — Auteur : Aurélien Moote - Moo - 2026 — Licence MIT
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import MapView from './components/MapView.jsx'
 import FountainList from './components/FountainList.jsx'
+import PlaceSearch from './components/PlaceSearch.jsx'
+import Toast from './components/Toast.jsx'
 import { useGeolocation } from './hooks/useGeolocation.js'
 import { useFountains } from './hooks/useFountains.js'
-import { geocodePlace, searchPlaces } from './services/geocode.js'
-
-/** Debounce, in milliseconds, before fetching place suggestions while typing. */
-const CITY_SUGGEST_DEBOUNCE_MS = 350
-/** Minimum query length before suggestions are fetched. */
-const CITY_SUGGEST_MIN_LENGTH = 2
+import { usePlaceSearch } from './hooks/usePlaceSearch.js'
+import { bboxAround } from './utils/geo.js'
 
 /**
- * Half-width/height (in degrees) of the bounding box used for the first
- * automatic search around the user. ~0.012° ≈ 1.3 km, a comfortable walking
- * radius that keeps the Overpass response fast.
+ * Radius, in metres, of the first automatic search around a known point (GPS
+ * fix, dropped pin, geocoded place). A comfortable walking distance that keeps
+ * the Overpass response small and fast.
  */
-const AUTO_SEARCH_HALF_DEG = 0.012
+const FOCUS_SEARCH_RADIUS_M = 1300
 
-/** Search a bbox of this half-width/height (degrees) around a manually-picked point. */
-const PICK_SEARCH_HALF_DEG = AUTO_SEARCH_HALF_DEG
+/** Delay after the map stops moving before searching the new area. */
+const PAN_SEARCH_DEBOUNCE_MS = 500
 
-/** Delay after the map stops moving before auto-searching the new area. */
-const PAN_SEARCH_DEBOUNCE_MS = 600
+/**
+ * Longer delay for the very first search, which fires as soon as the map is
+ * ready. It gives a pending GPS fix a moment to win, so the app searches where
+ * the user actually is instead of spending a request on the default view.
+ */
+const INITIAL_SEARCH_DELAY_MS = 1400
 
 /**
  * Root application component.
  *
- * Responsibilities:
- *  - wires geolocation and the fountain dataset together,
- *  - performs one automatic search around the user on first fix,
- *  - exposes "recenter on me", "choose location on map" and "search this
- *    area" controls,
- *  - coordinates the map view and the bottom-sheet list.
+ * It is the only place that knows about *all* the moving parts, and its job is
+ * to keep them from fighting each other:
+ *
+ *  - geolocation, dropped pins and place search all funnel into a single
+ *    "current position",
+ *  - every search request — automatic, panned or explicit — goes through
+ *    {@link useFountains}, which decides on its own whether a network call is
+ *    warranted. There is no flag to keep in sync, so no state in which the app
+ *    silently stops searching (the previous `suppressNextPanSearch` boolean
+ *    could get stuck and did exactly that).
  */
 export default function App() {
-  const { position: gpsPosition, error: geoError, locate } = useGeolocation()
-  const { fountains, loading, error: dataError, search } = useFountains()
+  const {
+    position: gpsPosition,
+    error: geoError,
+    loading: locating,
+    locate,
+  } = useGeolocation()
+  const {
+    fountains,
+    loading,
+    error: dataError,
+    notice,
+    hasSearched,
+    search,
+    retry,
+  } = useFountains()
 
-  /** Position chosen by tapping the map or searching a place, overriding the GPS fix until cleared. */
+  /** Position chosen by tapping the map or searching a place, overriding GPS until cleared. */
   const [manualPosition, setManualPosition] = useState(null)
   /** True while the user is asked to tap the map to set their location. */
   const [pickMode, setPickMode] = useState(false)
-  /** Whether the "search a place" input is shown. */
+  /** Whether the "search a place" panel is shown. */
   const [citySearchOpen, setCitySearchOpen] = useState(false)
-  const [cityQuery, setCityQuery] = useState('')
-  const [cityError, setCityError] = useState(null)
-  const [cityLoading, setCityLoading] = useState(false)
-  /** Type-ahead place suggestions for the current query. */
-  const [citySuggestions, setCitySuggestions] = useState([])
-  const citySuggestAbortRef = useRef(null)
-  /** True once the user has dismissed the current geolocation error toast. */
-  const [errorDismissed, setErrorDismissed] = useState(false)
-  /** Position the map should animate to (recenter button / list selection). */
+  /** Position the map should animate to (recenter, pin, list selection). */
   const [flyTo, setFlyTo] = useState(null)
-  /** Debounce timer for auto-searching after the map stops moving. */
-  const panSearchTimer = useRef(null)
-  /** Set to true when we programmatically fly the map so the next moveend
-   *  doesn't cancel the explicit search we already started for that location. */
-  const suppressNextPanSearch = useRef(false)
-  /** Ensures the automatic "near me" search only runs once. */
-  const autoSearched = useRef(false)
   const [sheetOpen, setSheetOpen] = useState(false)
+  /** Errors the user has dismissed, so a toast stays gone until it changes. */
+  const [dismissedError, setDismissedError] = useState(null)
+  const [dismissedNotice, setDismissedNotice] = useState(null)
+
+  /** Debounce timer for searching after the map settles. */
+  const panSearchTimer = useRef(null)
+  /** True while we are waiting for a fix to centre on (initial load, recenter). */
+  const awaitingFixRef = useRef(true)
+  /** False until the map has reported its bounds at least once. */
+  const firstBoundsSeenRef = useRef(false)
 
   const position = manualPosition ?? gpsPosition
 
-  // On the first GPS fix: center the map and search the surrounding area.
-  useEffect(() => {
-    if (!gpsPosition || autoSearched.current) return
-    autoSearched.current = true
-    suppressNextPanSearch.current = true
-    setFlyTo({ ...gpsPosition })
-    search([
-      gpsPosition.lat - AUTO_SEARCH_HALF_DEG,
-      gpsPosition.lng - AUTO_SEARCH_HALF_DEG,
-      gpsPosition.lat + AUTO_SEARCH_HALF_DEG,
-      gpsPosition.lng + AUTO_SEARCH_HALF_DEG,
-    ])
-  }, [gpsPosition, search])
+  /** Search around a point, at walking scale. */
+  const searchAround = useCallback(
+    (lat, lng) => {
+      const bbox = bboxAround(lat, lng, FOCUS_SEARCH_RADIUS_M)
+      if (bbox) search(bbox)
+    },
+    [search],
+  )
 
-  // Re-search automatically once the user stops panning/zooming.
-  // When we programmatically fly the map (GPS fix, pin drop, city search) we
-  // set suppressNextPanSearch so the resulting moveend doesn't abort and
-  // restart the explicit search we already kicked off for that location.
+  // Centre on the user as soon as a fix is available — on first load, and again
+  // whenever the recenter button is pressed before a fix has arrived.
+  useEffect(() => {
+    if (!gpsPosition || !awaitingFixRef.current) return
+    awaitingFixRef.current = false
+    setFlyTo({ ...gpsPosition })
+    searchAround(gpsPosition.lat, gpsPosition.lng)
+  }, [gpsPosition, searchAround])
+
+  // Search the visible area once the map settles. `useFountains` skips requests
+  // that are redundant (already covered) or unreasonable (too large), so this
+  // can fire freely without hammering Overpass.
+  //
+  // The bounds are read when the debounce expires rather than when it is armed:
+  // Leaflet also emits `moveend` mid-animation, and acting on those bounds made
+  // the app query areas the map was merely flying over.
   const handleBoundsChange = useCallback(
-    (bbox) => {
-      if (suppressNextPanSearch.current) {
-        suppressNextPanSearch.current = false
-        return
-      }
+    (getBbox) => {
       clearTimeout(panSearchTimer.current)
-      panSearchTimer.current = setTimeout(
-        () => search(bbox),
-        PAN_SEARCH_DEBOUNCE_MS,
-      )
+      const delay = firstBoundsSeenRef.current
+        ? PAN_SEARCH_DEBOUNCE_MS
+        : INITIAL_SEARCH_DELAY_MS
+      firstBoundsSeenRef.current = true
+      panSearchTimer.current = setTimeout(() => {
+        const bbox = getBbox()
+        if (bbox) search(bbox)
+      }, delay)
     },
     [search],
   )
@@ -102,85 +123,40 @@ export default function App() {
 
   const handleRecenter = useCallback(() => {
     setManualPosition(null)
-    setErrorDismissed(false)
+    setPickMode(false)
+    awaitingFixRef.current = true
+    // Called synchronously from the click handler: Safari only shows the
+    // permission prompt for geolocation requests made inside a user gesture.
     locate()
     if (gpsPosition) {
-      suppressNextPanSearch.current = true
+      awaitingFixRef.current = false
       setFlyTo({ ...gpsPosition })
+      searchAround(gpsPosition.lat, gpsPosition.lng)
     }
-  }, [locate, gpsPosition])
+  }, [locate, gpsPosition, searchAround])
 
+  /** Adopt a point (map tap or geocoded place) as the current location. */
   const handlePick = useCallback(
     (lat, lng) => {
       setPickMode(false)
       setCitySearchOpen(false)
+      awaitingFixRef.current = false
       setManualPosition({ lat, lng, accuracy: 0 })
-      suppressNextPanSearch.current = true
-      setFlyTo({ lat, lng })
-      search([
-        lat - PICK_SEARCH_HALF_DEG,
-        lng - PICK_SEARCH_HALF_DEG,
-        lat + PICK_SEARCH_HALF_DEG,
-        lng + PICK_SEARCH_HALF_DEG,
-      ])
+      setFlyTo({ lat, lng, accuracy: 0 })
+      searchAround(lat, lng)
     },
-    [search],
+    [searchAround],
   )
 
-  // Debounced type-ahead suggestions as the user types a place name.
-  useEffect(() => {
-    if (!citySearchOpen || cityQuery.trim().length < CITY_SUGGEST_MIN_LENGTH) {
-      setCitySuggestions([])
-      return
-    }
-    const timer = setTimeout(() => {
-      citySuggestAbortRef.current?.abort()
-      const controller = new AbortController()
-      citySuggestAbortRef.current = controller
-      searchPlaces(cityQuery, controller.signal)
-        .then((results) => {
-          setCitySuggestions(results)
-          setCityError(null)
-        })
-        .catch((err) => {
-          if (err.name === 'AbortError') return
-          setCitySuggestions([])
-          setCityError(err.message)
-        })
-    }, CITY_SUGGEST_DEBOUNCE_MS)
-    return () => clearTimeout(timer)
-  }, [cityQuery, citySearchOpen])
-
-  const handleSuggestionSelect = useCallback(
-    (place) => {
-      citySuggestAbortRef.current?.abort()
-      setCitySuggestions([])
-      setCityQuery('')
-      setCityError(null)
-      handlePick(place.lat, place.lng)
-    },
+  const handlePlacePicked = useCallback(
+    (place) => handlePick(place.lat, place.lng),
     [handlePick],
   )
 
-  const handleCitySubmit = useCallback(
-    async (e) => {
-      e.preventDefault()
-      citySuggestAbortRef.current?.abort()
-      setCitySuggestions([])
-      setCityLoading(true)
-      setCityError(null)
-      try {
-        const { lat, lng } = await geocodePlace(cityQuery)
-        handlePick(lat, lng)
-        setCityQuery('')
-      } catch (err) {
-        if (err.name !== 'AbortError') setCityError(err.message)
-      } finally {
-        setCityLoading(false)
-      }
-    },
-    [cityQuery, handlePick],
-  )
+  const placeSearch = usePlaceSearch({
+    active: citySearchOpen,
+    onPicked: handlePlacePicked,
+  })
 
   const handleSelect = useCallback((fountain) => {
     setFlyTo({ lat: fountain.lat, lng: fountain.lng, accuracy: 0 })
@@ -188,16 +164,16 @@ export default function App() {
   }, [])
 
   // Once a manual location (pin or city) is active, a stale GPS error isn't
-  // relevant anymore - the app is working via the alternative the user chose.
-  const rawError = dataError || (!manualPosition && geoError) || null
+  // relevant anymore — the app is working via the alternative the user chose.
+  const activeError = dataError || (!manualPosition && geoError) || null
+  const visibleError = activeError && activeError !== dismissedError ? activeError : null
+  const visibleNotice = notice && notice !== dismissedNotice ? notice : null
 
-  // Re-show the toast whenever the underlying error actually changes, even
-  // if the user dismissed a previous one.
-  useEffect(() => {
-    setErrorDismissed(false)
-  }, [rawError])
-
-  const error = !errorDismissed && rawError
+  const statusLabel = useMemo(() => {
+    if (loading) return 'Searching…'
+    if (locating && !position) return 'Locating…'
+    return null
+  }, [loading, locating, position])
 
   return (
     <div className="app">
@@ -216,55 +192,7 @@ export default function App() {
         onPick={handlePick}
       />
 
-      {citySearchOpen && (
-        <div className="city-search-wrap">
-          <form className="city-search" onSubmit={handleCitySubmit}>
-            <input
-              className="city-search__input"
-              type="text"
-              value={cityQuery}
-              onChange={(e) => setCityQuery(e.target.value)}
-              placeholder="Search a city or address…"
-              autoComplete="off"
-              autoFocus
-            />
-            <button
-              className="btn btn--primary city-search__submit"
-              type="submit"
-              disabled={cityLoading || !cityQuery.trim()}
-            >
-              {cityLoading ? '…' : 'Go'}
-            </button>
-          </form>
-          {citySuggestions.length > 0 && (
-            <ul className="city-suggestions">
-              {citySuggestions.map((place, i) => (
-                <li key={`${place.lat},${place.lng}-${i}`}>
-                  <button
-                    type="button"
-                    className="city-suggestions__item"
-                    onClick={() => handleSuggestionSelect(place)}
-                  >
-                    {place.label}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-      {citySearchOpen && cityError && (
-        <div className="toast toast--error toast--compact" role="alert">
-          <span>{cityError}</span>
-          <button
-            className="toast__dismiss"
-            onClick={() => setCityError(null)}
-            aria-label="Dismiss"
-          >
-            ×
-          </button>
-        </div>
-      )}
+      {citySearchOpen && <PlaceSearch state={placeSearch} />}
 
       <div className="controls">
         <button
@@ -276,6 +204,7 @@ export default function App() {
             setPickMode(false)
           }}
           aria-label="Search a city"
+          aria-pressed={citySearchOpen}
           title="Search a city"
         >
           🔎
@@ -289,6 +218,7 @@ export default function App() {
             setCitySearchOpen(false)
           }}
           aria-label="Choose location on the map"
+          aria-pressed={pickMode}
           title="Choose location on the map"
         >
           📍
@@ -303,28 +233,28 @@ export default function App() {
         </button>
       </div>
 
-      {pickMode && (
-        <div className="toast toast--info toast--compact" role="status">
-          Tap the map to set your location
-        </div>
+      {pickMode && <Toast>Tap the map to set your location</Toast>}
+
+      {!pickMode && visibleError && (
+        <Toast
+          variant="error"
+          onDismiss={() => setDismissedError(activeError)}
+          action={dataError ? { label: 'Retry', onClick: retry } : undefined}
+        >
+          {visibleError}
+        </Toast>
       )}
 
-      {error && (
-        <div className="toast toast--error toast--compact" role="alert">
-          <span>{error}</span>
-          <button
-            className="toast__dismiss"
-            onClick={() => setErrorDismissed(true)}
-            aria-label="Dismiss"
-          >
-            ×
-          </button>
-        </div>
+      {!pickMode && !visibleError && visibleNotice && (
+        <Toast onDismiss={() => setDismissedNotice(notice)}>
+          {visibleNotice}
+        </Toast>
       )}
 
       <FountainList
         fountains={fountains}
-        loading={loading}
+        status={statusLabel}
+        searched={hasSearched}
         userPosition={position}
         open={sheetOpen}
         onToggle={() => setSheetOpen((o) => !o)}

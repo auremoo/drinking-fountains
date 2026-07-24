@@ -5,27 +5,76 @@
  * OSM is the most complete and precise free dataset for street furniture in
  * large cities worldwide, and requires no API key.
  *
+ * The public Overpass instances are the least reliable dependency in the app —
+ * they rate-limit, restart, and occasionally answer HTML error pages with a
+ * 200 status. This module is built around that reality:
+ *
+ *  - **Hedged mirrors.** Several instances are queried with a short stagger and
+ *    the first usable answer wins, so one dead mirror costs seconds, not the
+ *    search (see {@link raceWithHedging}).
+ *  - **Short-lived cache.** Identical/nearby views reuse a recent answer instead
+ *    of re-querying, which is both faster and the main reason we stay under the
+ *    mirrors' rate limits.
+ *  - **Defensive parsing.** Every element is validated before it can reach
+ *    Leaflet; a single malformed coordinate used to crash the whole map.
+ *  - **Bounded result sets.** Huge answers are capped, keeping the browser
+ *    responsive on dense city centres.
+ *
  * @module services/overpass
  * @see https://wiki.openstreetmap.org/wiki/Tag:amenity%3Ddrinking_water
  * @see https://wiki.openstreetmap.org/wiki/Overpass_API
  */
 
+import { fetchJson, raceWithHedging, HttpError } from './http.js'
+import {
+  bboxCenter,
+  bboxKey,
+  isValidLatLng,
+  normalizeBbox,
+  toNumber,
+} from '../utils/geo.js'
+import { distanceMeters } from '../utils/distance.js'
+
 /**
- * Public Overpass endpoints. We try them in order so a single overloaded
- * mirror does not break the app.
+ * Public Overpass endpoints, in order of preference. They are queried with a
+ * stagger rather than strictly one after another, so this order only decides
+ * who gets a head start.
  * @type {string[]}
  */
-const ENDPOINTS = [
+export const ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.osm.ch/api/interpreter',
 ]
 
 /**
- * Per-endpoint network timeout, in milliseconds. Kept short so failure is
- * visible quickly rather than after a 30+ second wait (num_endpoints × timeout).
- * @type {number}
+ * How long to wait for a mirror before *also* trying the next one. Overpass
+ * answers a neighbourhood-sized query in ~1-3 s when healthy, so a mirror that
+ * is still silent after this is very likely struggling.
  */
-const ENDPOINT_TIMEOUT_MS = 7000
+const HEDGE_DELAY_MS = 3500
+
+/**
+ * Overall budget for a search across every mirror. Past this the app reports a
+ * clear failure instead of leaving a spinner running forever.
+ */
+const DEADLINE_MS = 20000
+
+/** Per-mirror request budget. Generous: a slow answer still beats no answer. */
+const ENDPOINT_TIMEOUT_MS = 15000
+
+/** How long a cached answer stays usable. */
+const CACHE_TTL_MS = 5 * 60 * 1000
+
+/** Maximum number of cached bounding boxes kept in memory. */
+const CACHE_MAX_ENTRIES = 24
+
+/**
+ * Hard cap on the fountains handed to the UI. Beyond this the map's marker
+ * clustering and the bottom-sheet list start costing more than they give;
+ * the nearest ones to the centre of the search are kept.
+ */
+export const MAX_FOUNTAINS = 500
 
 /**
  * A normalized drinking-water fountain.
@@ -41,6 +90,17 @@ const ENDPOINT_TIMEOUT_MS = 7000
  */
 
 /**
+ * The outcome of a search.
+ * @typedef {Object} FountainsResult
+ * @property {Fountain[]} fountains - Validated, de-duplicated fountains.
+ * @property {boolean} truncated - True when more matches existed than
+ *   {@link MAX_FOUNTAINS} and the list was trimmed to the nearest ones.
+ * @property {boolean} partial - True when Overpass answered with a `remark`
+ *   (usually "query timed out"), i.e. the data may be incomplete.
+ * @property {boolean} cached - True when served from the in-memory cache.
+ */
+
+/**
  * Build the Overpass QL query selecting drinking-water fountains within a
  * bounding box.
  *
@@ -51,7 +111,7 @@ const ENDPOINT_TIMEOUT_MS = 7000
  * @param {[number, number, number, number]} bbox - `[south, west, north, east]`.
  * @returns {string} Overpass QL query text.
  */
-function buildQuery([south, west, north, east]) {
+export function buildQuery([south, west, north, east]) {
   const bb = `${south},${west},${north},${east}`
   return `[out:json][timeout:25];
 (
@@ -76,19 +136,29 @@ function parseBool(value) {
 
 /**
  * Convert a raw Overpass element into a {@link Fountain}.
+ *
+ * Returns `null` for anything unusable — a missing, non-numeric or
+ * out-of-range coordinate, or an element without an id. Rendering such an
+ * element throws inside Leaflet, which unmounts the map and leaves a blank
+ * screen, so filtering here is a stability feature, not tidiness.
+ *
  * @param {object} el - Overpass element.
- * @returns {Fountain|null} Null when the element has no usable coordinate.
+ * @returns {Fountain|null}
  */
-function normalize(el) {
-  const lat = el.lat ?? el.center?.lat
-  const lng = el.lon ?? el.center?.lon
-  if (lat == null || lng == null) return null
-  const tags = el.tags ?? {}
+export function normalize(el) {
+  if (!el || typeof el !== 'object') return null
+
+  const lat = toNumber(el.lat ?? el.center?.lat)
+  const lng = toNumber(el.lon ?? el.center?.lon)
+  if (!isValidLatLng(lat, lng)) return null
+  if (el.id === undefined || el.id === null) return null
+
+  const tags = el.tags && typeof el.tags === 'object' ? el.tags : {}
   return {
-    id: `${el.type}/${el.id}`,
+    id: `${el.type ?? 'node'}/${el.id}`,
     lat,
     lng,
-    name: tags.name,
+    name: typeof tags.name === 'string' ? tags.name : undefined,
     wheelchair: parseBool(tags.wheelchair),
     bottle: parseBool(tags.bottle),
     tags,
@@ -96,47 +166,159 @@ function normalize(el) {
 }
 
 /**
+ * Turn a raw Overpass payload into validated, de-duplicated fountains capped
+ * at {@link MAX_FOUNTAINS} (nearest to `center` first when trimming).
+ *
+ * @param {any} json - Parsed Overpass response.
+ * @param {{ lat: number, lng: number }} center - Reference point for trimming.
+ * @returns {{ fountains: Fountain[], truncated: boolean }}
+ */
+export function parseElements(json, center) {
+  const elements = Array.isArray(json?.elements) ? json.elements : []
+
+  /** @type {Map<string, Fountain>} */
+  const byId = new Map()
+  for (const el of elements) {
+    const fountain = normalize(el)
+    // A node can match several clauses of the union; keep one marker per id.
+    if (fountain && !byId.has(fountain.id)) byId.set(fountain.id, fountain)
+  }
+
+  let fountains = [...byId.values()]
+  const truncated = fountains.length > MAX_FOUNTAINS
+  if (truncated) {
+    fountains = fountains
+      .map((f) => ({
+        f,
+        d: distanceMeters(center.lat, center.lng, f.lat, f.lng),
+      }))
+      .sort((a, b) => a.d - b.d)
+      .slice(0, MAX_FOUNTAINS)
+      .map((entry) => entry.f)
+  }
+  return { fountains, truncated }
+}
+
+/**
+ * In-memory cache of recent answers, keyed by bounding box.
+ * @type {Map<string, { at: number, result: FountainsResult }>}
+ */
+const cache = new Map()
+
+/** Drop the cache (used by tests and by the "hard refresh" recovery path). */
+export function clearFountainCache() {
+  cache.clear()
+}
+
+/**
+ * @param {string} key
+ * @returns {FountainsResult|null}
+ */
+function readCache(key) {
+  const entry = cache.get(key)
+  if (!entry) return null
+  if (Date.now() - entry.at > CACHE_TTL_MS) {
+    cache.delete(key)
+    return null
+  }
+  // Refresh recency so the eviction below behaves like an LRU.
+  cache.delete(key)
+  cache.set(key, entry)
+  return { ...entry.result, cached: true }
+}
+
+/**
+ * @param {string} key
+ * @param {FountainsResult} result
+ */
+function writeCache(key, result) {
+  cache.set(key, { at: Date.now(), result })
+  while (cache.size > CACHE_MAX_ENTRIES) {
+    const oldest = cache.keys().next().value
+    cache.delete(oldest)
+  }
+}
+
+/**
+ * Turn a transport-level failure into something a user can act on.
+ *
+ * @param {unknown} err
+ * @returns {string}
+ */
+export function describeFailure(err) {
+  if (err instanceof HttpError) {
+    if (err.isOverloaded) {
+      return 'The OpenStreetMap servers are busy right now. Tap retry in a moment.'
+    }
+    if (err.status >= 500) {
+      return 'The OpenStreetMap servers are having trouble. Tap retry in a moment.'
+    }
+    return `The fountain service refused the request (HTTP ${err.status}).`
+  }
+  if (/** @type {Error} */ (err)?.name === 'TimeoutError') {
+    return 'The fountain search took too long. Check your connection and retry.'
+  }
+  return 'Could not reach the fountain service. Check your connection and retry.'
+}
+
+/**
  * Fetch drinking-water fountains within the given bounding box.
  *
  * @param {[number, number, number, number]} bbox - `[south, west, north, east]`.
- * @param {AbortSignal} [signal] - Optional signal to cancel an in-flight request.
- * @returns {Promise<Fountain[]>} Resolves with normalized fountains.
- * @throws {Error} When every Overpass endpoint fails.
+ * @param {Object} [options]
+ * @param {AbortSignal} [options.signal] - Cancels the search.
+ * @param {boolean} [options.force] - Bypass the cache (used by "retry").
+ * @returns {Promise<FountainsResult>}
+ * @throws {Error} `AbortError` when cancelled, or a descriptive error when
+ *   every mirror failed.
  */
-export async function fetchFountains(bbox, signal) {
-  const body = `data=${encodeURIComponent(buildQuery(bbox))}`
-  let lastError
+export async function fetchFountains(bbox, { signal, force = false } = {}) {
+  const box = normalizeBbox(bbox)
+  if (!box) throw new Error('Invalid search area')
 
-  for (const endpoint of ENDPOINTS) {
-    // Race each mirror against its own timeout so a slow/unresponsive server
-    // can't stall the whole search; the caller's signal still cancels everything.
-    const timeoutController = new AbortController()
-    const timer = setTimeout(
-      () => timeoutController.abort(),
-      ENDPOINT_TIMEOUT_MS,
-    )
-    const onAbort = () => timeoutController.abort()
-    signal?.addEventListener('abort', onAbort)
+  const key = bboxKey(box)
+  if (!force) {
+    const hit = readCache(key)
+    if (hit) return hit
+  }
 
-    try {
-      const res = await fetch(endpoint, {
+  const body = `data=${encodeURIComponent(buildQuery(box))}`
+  const center = bboxCenter(box)
+
+  const json = await raceWithHedging(
+    ENDPOINTS.map((endpoint) => async (mirrorSignal) => {
+      const payload = await fetchJson(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body,
-        signal: timeoutController.signal,
+        signal: mirrorSignal,
+        timeoutMs: ENDPOINT_TIMEOUT_MS,
       })
-      if (!res.ok) throw new Error(`Overpass HTTP ${res.status}`)
-      const json = await res.json()
-      return (json.elements ?? []).map(normalize).filter(Boolean)
-    } catch (err) {
-      if (signal?.aborted) throw err // caller cancelled; not a per-endpoint failure
-      lastError = err
-    } finally {
-      clearTimeout(timer)
-      signal?.removeEventListener('abort', onAbort)
-    }
-  }
-  throw new Error(
-    `Could not reach any Overpass server. ${lastError?.message ?? ''}`.trim(),
+      // Overpass reports server-side failures as a 200 with a `remark` and no
+      // elements. Treat that as a mirror failure so a sibling can answer.
+      if (
+        !Array.isArray(payload?.elements) ||
+        (payload.elements.length === 0 && payload?.remark)
+      ) {
+        throw new Error(
+          typeof payload?.remark === 'string'
+            ? payload.remark
+            : 'Malformed Overpass response',
+        )
+      }
+      return payload
+    }),
+    { hedgeDelayMs: HEDGE_DELAY_MS, deadlineMs: DEADLINE_MS, signal },
   )
+
+  const { fountains, truncated } = parseElements(json, center)
+  /** @type {FountainsResult} */
+  const result = {
+    fountains,
+    truncated,
+    partial: typeof json?.remark === 'string' && json.remark.length > 0,
+    cached: false,
+  }
+  writeCache(key, result)
+  return result
 }

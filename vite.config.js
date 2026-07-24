@@ -17,6 +17,13 @@ import { VitePWA } from 'vite-plugin-pwa'
  * @see https://vite-pwa-org.netlify.app/
  */
 export default defineConfig({
+  // Unit tests (`npm test`) cover the pure logic and the data services, which
+  // is where the app's reliability is decided. They run in Node with `fetch`
+  // stubbed — no network, no browser needed.
+  test: {
+    environment: 'node',
+    include: ['src/**/*.test.{js,jsx}'],
+  },
   // Served from a GitHub Pages *project* site, i.e.
   // https://auremoo.github.io/drinking-fountains/ — every asset URL must be
   // prefixed with the repository name. For a custom domain or a user/org
@@ -52,15 +59,30 @@ export default defineConfig({
       workbox: {
         // Pre-cache the build output (the app shell).
         globPatterns: ['**/*.{js,css,html,svg,png,ico}'],
+        // Take over immediately after an update. Without this, a home-screen
+        // install can keep serving an old shell whose JavaScript chunks no
+        // longer exist on the server — the app then fails to boot with no
+        // address bar to force-reload from.
+        clientsClaim: true,
+        skipWaiting: true,
+        // Delete precaches from previous Workbox versions instead of letting
+        // them accumulate and compete for storage quota.
+        cleanupOutdatedCaches: true,
+        // Never let the service worker answer an API call from the cache: stale
+        // fountains are worse than no fountains.
+        navigateFallbackDenylist: [/^\/api/],
         // Map tiles: cache opportunistically so revisited areas load faster,
-        // but always try the network first to stay current.
+        // but always try the network first to stay current. The subdomain-less
+        // host is the one OSM recommends; the `[a-c].` variants stay matched so
+        // tiles cached by earlier versions of the app remain usable.
         runtimeCaching: [
           {
-            urlPattern: /^https:\/\/[a-c]\.tile\.openstreetmap\.org\/.*/i,
+            urlPattern: /^https:\/\/([a-c]\.)?tile\.openstreetmap\.org\/.*/i,
             handler: 'StaleWhileRevalidate',
             options: {
               cacheName: 'osm-tiles',
               expiration: { maxEntries: 500, maxAgeSeconds: 60 * 60 * 24 * 30 },
+              cacheableResponse: { statuses: [0, 200] },
             },
           },
         ],

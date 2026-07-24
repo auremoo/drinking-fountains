@@ -37,6 +37,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Fail the deployment before it ships rather than after: the unit tests
+      # cover the search policy and the data services, i.e. the parts whose
+      # regressions are only visible to users, in the street, at the worst time.
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
       - name: Build
         run: npm run build
 
