@@ -27,6 +27,13 @@ const PAN_SEARCH_DEBOUNCE_MS = 500
 const INITIAL_SEARCH_DELAY_MS = 1400
 
 /**
+ * How long the app must have been in the background before returning to it
+ * re-requests the user's position. Short enough to catch a real trip, long
+ * enough to ignore switching apps for a few seconds.
+ */
+const RESUME_RELOCATE_AFTER_MS = 30000
+
+/**
  * Root application component.
  *
  * It is the only place that knows about *all* the moving parts, and its job is
@@ -76,14 +83,20 @@ export default function App() {
   const awaitingFixRef = useRef(true)
   /** False until the map has reported its bounds at least once. */
   const firstBoundsSeenRef = useRef(false)
+  /** When the app was last hidden, to size up how stale things are on resume. */
+  const hiddenSinceRef = useRef(Date.now())
 
   const position = manualPosition ?? gpsPosition
 
+  // Read by the resume listener, which must stay subscribed across renders.
+  const manualPositionRef = useRef(manualPosition)
+  manualPositionRef.current = manualPosition
+
   /** Search around a point, at walking scale. */
   const searchAround = useCallback(
-    (lat, lng) => {
+    (lat, lng, options) => {
       const bbox = bboxAround(lat, lng, FOCUS_SEARCH_RADIUS_M)
-      if (bbox) search(bbox)
+      if (bbox) search(bbox, options)
     },
     [search],
   )
@@ -124,16 +137,53 @@ export default function App() {
   const handleRecenter = useCallback(() => {
     setManualPosition(null)
     setPickMode(false)
+    // Stay armed for the *next* fix even when a position is already known.
+    // The known one can be badly out of date — the app may have spent hours in
+    // the background while the user travelled — so it is only good enough for
+    // instant feedback, never for deciding where to search.
     awaitingFixRef.current = true
     // Called synchronously from the click handler: Safari only shows the
     // permission prompt for geolocation requests made inside a user gesture.
     locate()
     if (gpsPosition) {
-      awaitingFixRef.current = false
       setFlyTo({ ...gpsPosition })
-      searchAround(gpsPosition.lat, gpsPosition.lng)
+      // An explicit tap also means "refresh what you're showing me", so this
+      // one bypasses the cache. When the fresh fix lands moments later, the
+      // effect above searches again — and the coverage rule makes that free if
+      // the user has not actually moved.
+      searchAround(gpsPosition.lat, gpsPosition.lng, { force: true })
     }
   }, [locate, gpsPosition, searchAround])
+
+  // Coming back from the background is the other moment the known position is
+  // likely to be wrong: iOS suspends the page, the watch stops delivering, and
+  // the app happily keeps showing where the user was. Ask again on resume.
+  useEffect(() => {
+    if (typeof document === 'undefined') return undefined
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') {
+        hiddenSinceRef.current = Date.now()
+        return
+      }
+      const hiddenFor = Date.now() - hiddenSinceRef.current
+      hiddenSinceRef.current = Date.now()
+      // Ignore a quick app switch; only a real absence is worth re-locating for.
+      if (hiddenFor < RESUME_RELOCATE_AFTER_MS) return
+      // A location the user chose by hand stays chosen.
+      if (manualPositionRef.current) return
+
+      awaitingFixRef.current = true
+      locate({ silent: true, fresh: true })
+    }
+
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    window.addEventListener('pageshow', onVisibilityChange)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      window.removeEventListener('pageshow', onVisibilityChange)
+    }
+  }, [locate])
 
   /** Adopt a point (map tap or geocoded place) as the current location. */
   const handlePick = useCallback(
@@ -169,11 +219,16 @@ export default function App() {
   const visibleError = activeError && activeError !== dismissedError ? activeError : null
   const visibleNotice = notice && notice !== dismissedNotice ? notice : null
 
+  // "0 fountains nearby" must mean "we looked and there are none" — never "we
+  // have not looked yet". Claiming zero before the first result is what made a
+  // slow, skipped or failed search look like an empty city.
   const statusLabel = useMemo(() => {
     if (loading) return 'Searching…'
+    if (hasSearched) return null
     if (locating && !position) return 'Locating…'
-    return null
-  }, [loading, locating, position])
+    if (dataError) return 'Fountains unavailable'
+    return 'Loading fountains…'
+  }, [loading, locating, position, hasSearched, dataError])
 
   return (
     <div className="app">

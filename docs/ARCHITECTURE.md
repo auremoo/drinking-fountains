@@ -55,7 +55,8 @@ source — swapping in a different provider would only touch these files.
 - **`useGeolocation`** wraps `navigator.geolocation.watchPosition` so the user
   dot tracks movement, and exposes an imperative `locate()` for the recenter
   button. It stops watching after a denial, ignores transient failures once a
-  fix exists, and falls back to a coarse fix when a precise one times out.
+  fix exists, falls back to a coarse fix when a precise one times out, and
+  refuses a cached position for any fix the user explicitly asked for.
 - **`useFountains`** owns the dataset and request lifecycle: request tokens so a
   stale answer can never overwrite a newer one, exponential backoff after
   failures, previous results preserved on error, and a `retry()` that bypasses
@@ -88,6 +89,13 @@ recovery.
 - forwards every settled map view to `useFountains`, which decides on its own
   whether a request is warranted,
 - drives `flyTo` animations for recenter and list selection.
+
+Two moments get special treatment, because both are when the position the app
+believes in is most likely to be wrong: the user tapping *locate me*, and the
+app returning to the foreground after more than 30 seconds away. In both cases a
+**fresh** fix is requested, and the app stays armed to re-centre and re-search on
+the fix that comes back — never on the one it already had. iOS suspends the page
+and stops the position watch, so "the position I know" can be a whole trip old.
 
 It holds **no flag describing what the search layer should do**. An earlier
 version kept a `suppressNextPanSearch` boolean to stop programmatic map moves
@@ -152,7 +160,10 @@ invisible until a user is standing in the street:
 - `http` — abort/timeout semantics and hedged fallback,
 - `overpass` — normalization, de-duplication, capping, mirror fallback, cache,
 - `geocode` — provider parsing and "no match" versus "unavailable",
-- `distance` — known city-to-city distances and formatting.
+- `distance` — known city-to-city distances and formatting,
+- `App` — the orchestration between locating and searching (fresh fix after a
+  background spell, refresh on resume, and what the sheet is allowed to claim),
+  with the map stubbed out since none of that is about drawing.
 
 The React layer is verified by driving the built app in a real browser
 (Playwright) against a stubbed Overpass: happy path, dead mirror, malformed

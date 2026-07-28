@@ -119,6 +119,8 @@ saturated or down. Rather than hoping otherwise, it is built to keep working:
 | The data contains broken coordinates | Filtered out before reaching Leaflet, which would otherwise throw and blank the screen |
 | A dense city returns thousands of fountains | Capped at the 500 nearest, with a notice |
 | Location permission is refused | The visible area is still searched; pin-drop and place search remain available |
+| The app comes back from the background | A fresh position is requested (never the one the OS cached before the trip), and the new area is searched |
+| Nothing has been searched yet | The sheet says "Locating…" / "Searching…" / "Fountains unavailable" — it only claims "0 fountains" once a search has actually come back empty |
 | A render error escapes anyway | An error screen with **Reload**, **Reset app data** and **Copy details** — never a white page |
 
 Recorded errors (including ones that only happened once) can be copied from that

@@ -14,8 +14,8 @@ import { isValidLatLng } from '../utils/geo.js'
  * @property {string|null} error - Human-readable error, if any.
  * @property {boolean} loading - True while waiting for a first fix.
  * @property {boolean} supported - False when the browser has no Geolocation API.
- * @property {(options?: { silent?: boolean }) => void} locate - Imperatively
- *   (re)request a fresh fix.
+ * @property {(options?: { silent?: boolean, fresh?: boolean }) => void} locate -
+ *   Imperatively (re)request a fix. `fresh` forbids a cached one.
  */
 
 const PERMISSION_DENIED = 1
@@ -35,6 +35,17 @@ const HIGH_ACCURACY_OPTIONS = {
   maximumAge: 10000,
   timeout: 15000,
 }
+
+/**
+ * Age tolerance for a fix the user explicitly asked for, or one requested when
+ * the app comes back to the foreground.
+ *
+ * `maximumAge: 0` matters after the app has been in the background: the OS
+ * still holds the position from before, and happily hands that one back. The
+ * app would then confidently re-centre on where the user *was*, which is the
+ * one moment they are most likely to be somewhere else.
+ */
+const NO_CACHE = { maximumAge: 0 }
 
 /**
  * Fallback options. Devices without GPS (most desktops, some tablets) can only
@@ -165,10 +176,21 @@ export function useGeolocation() {
     [clearWatch, supported],
   )
 
+  /**
+   * Request a fix. Explicit requests default to refusing a cached position:
+   * the user tapping "locate me" means *now*, not "wherever you last saw me".
+   *
+   * @param {{ silent?: boolean, fresh?: boolean }} [options]
+   */
   const locate = useCallback(
-    ({ silent = false } = {}) => {
+    ({ silent = false, fresh = !silent } = {}) => {
       triedFallbackRef.current = false
-      start({ silent })
+      start({
+        silent,
+        options: fresh
+          ? { ...HIGH_ACCURACY_OPTIONS, ...NO_CACHE }
+          : HIGH_ACCURACY_OPTIONS,
+      })
     },
     [start],
   )
