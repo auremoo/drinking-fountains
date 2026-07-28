@@ -5,6 +5,9 @@
   "description": "A mobile-first, installable PWA that maps publicly available drinking-water fountains around you, sourced from OpenStreetMap.",
   "author": "Aurélien Moote - Moo - 2026",
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -28,7 +31,7 @@
     "eslint": "^8.57.0",
     "eslint-plugin-react": "^7.35.0",
     "eslint-plugin-react-hooks": "^4.6.2",
-    "jsdom": "^30.0.0",
+    "jsdom": "^26.1.0",
     "vite": "^5.4.0",
     "vite-plugin-pwa": "^0.20.5",
     "vitest": "^2.1.9"

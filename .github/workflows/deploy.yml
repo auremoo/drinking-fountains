@@ -31,7 +31,10 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # Keep this in step with `engines.node` in package.json. CI running an
+          # older Node than development is how a dependency that could not even
+          # load in CI got merged: the tests it powered were skipped, not failed.
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
