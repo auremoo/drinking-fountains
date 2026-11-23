@@ -63,6 +63,15 @@ const DEADLINE_MS = 20000
 /** Per-mirror request budget. Generous: a slow answer still beats no answer. */
 const ENDPOINT_TIMEOUT_MS = 15000
 
+/** Run time the query asks the server for, in seconds. */
+const SERVER_TIMEOUT_S = ENDPOINT_TIMEOUT_MS / 1000
+
+/**
+ * Memory the query asks the server for (64 MiB, against a default of 512).
+ * The largest area the app will query fits in half of this.
+ */
+const SERVER_MAXSIZE_BYTES = 64 * 1024 * 1024
+
 /** How long a cached answer stays usable. */
 const CACHE_TTL_MS = 5 * 60 * 1000
 
@@ -107,19 +116,26 @@ export const MAX_FOUNTAINS = 500
  * We match both the canonical `amenity=drinking_water` and the common
  * `drinking_water=yes` qualifier on fountains/taps, across nodes, ways and
  * relations, then ask Overpass for the geometric centre of non-node elements.
+ * Together the two node clauses select every node tagged with either, so a
+ * dedicated clause for drinkable `man_made=water_tap` would only repeat them.
+ *
+ * The declared budgets are deliberately modest. Overpass decides whether to
+ * admit a query from the `timeout` and `maxsize` it announces, not from what it
+ * ends up using, so asking for the defaults gets a small query turned away
+ * first when a server is busy. The timeout matches {@link ENDPOINT_TIMEOUT_MS}:
+ * past it nobody is listening for the answer anyway.
  *
  * @param {[number, number, number, number]} bbox - `[south, west, north, east]`.
  * @returns {string} Overpass QL query text.
  */
 export function buildQuery([south, west, north, east]) {
   const bb = `${south},${west},${north},${east}`
-  return `[out:json][timeout:25];
+  return `[out:json][timeout:${SERVER_TIMEOUT_S}][maxsize:${SERVER_MAXSIZE_BYTES}];
 (
   node["amenity"="drinking_water"](${bb});
   way["amenity"="drinking_water"](${bb});
   relation["amenity"="drinking_water"](${bb});
   node["drinking_water"="yes"]["amenity"!="drinking_water"](${bb});
-  node["man_made"="water_tap"]["drinking_water"="yes"](${bb});
 );
 out center tags;`
 }

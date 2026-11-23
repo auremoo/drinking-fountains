@@ -10,6 +10,11 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
     />
     <meta name="theme-color" content="#0ea5e9" />
+    <!-- Open the connections the first screen needs (map tiles, fountain
+         search) while the JavaScript is still downloading. Both are fetched
+         without credentials, hence `crossorigin`. -->
+    <link rel="preconnect" href="https://tile.openstreetmap.org" crossorigin />
+    <link rel="preconnect" href="https://overpass-api.de" crossorigin />
     <meta
       name="description"
       content="Find publicly available drinking-water fountains around you."

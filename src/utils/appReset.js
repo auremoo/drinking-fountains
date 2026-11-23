@@ -12,11 +12,12 @@
  */
 
 import { clearFountainCache } from '../services/overpass.js'
+import { clearLastView } from './lastView.js'
 
 /**
  * Unregister every service worker, delete every cache, then reload from the
  * network. Only user data lost is cached map tiles and fountain results, both
- * of which are re-fetched on demand.
+ * of which are re-fetched on demand, and the remembered map view.
  *
  * @returns {Promise<void>} Resolves just before the reload is triggered.
  */
@@ -26,6 +27,9 @@ export async function resetApp() {
   } catch {
     /* ignore */
   }
+
+  // "Reset app data" means all of it, including where the map was last left.
+  clearLastView()
 
   try {
     if (typeof navigator !== 'undefined' && navigator.serviceWorker) {
@@ -46,6 +50,25 @@ export async function resetApp() {
   }
 
   if (typeof window !== 'undefined') window.location.reload()
+}
+
+/**
+ * Delete the tile cache written by earlier versions of the app.
+ *
+ * Those versions fetched tiles without CORS, so every entry is an opaque
+ * response: unusable now that tiles are requested with CORS, and counted
+ * against the storage quota at several megabytes apiece. The current cache
+ * lives under another name (see `vite.config.js`), so this is pure cleanup,
+ * and a no-op once done.
+ *
+ * @returns {void}
+ */
+export function dropLegacyTileCache() {
+  try {
+    if (typeof caches !== 'undefined') caches.delete('osm-tiles').catch(() => {})
+  } catch {
+    /* Cache Storage unavailable (private mode, insecure origin): nothing to drop */
+  }
 }
 
 /**

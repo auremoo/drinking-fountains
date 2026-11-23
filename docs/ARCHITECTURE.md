@@ -66,11 +66,15 @@ source — swapping in a different provider would only touch these files.
 
 ### Components (`src/components/`)
 - **`MapView`** is the Leaflet map. Helper child components
-  (`RecenterOnChange`, `BoundsReporter`, `ViewportSync`, `LocationPicker`) use
-  `react-leaflet` hooks to bridge React state and the imperative Leaflet
-  instance. Markers are **clustered** so dense city centres remain legible.
+  (`RecenterOnChange`, `BoundsReporter`, `ViewportSync`, `LocationPicker`,
+  `ViewMemory`) use `react-leaflet` hooks to bridge React state and the
+  imperative Leaflet instance.
+- **`FountainLayer`** draws the fountains, **clustered** so dense city centres
+  remain legible. It drives `leaflet.markercluster` directly instead of
+  rendering one React component per marker (see *Rendering cost* below).
 - **`FountainList`** is a bottom sheet that sorts fountains by distance and
-  offers "fly to" and "directions" actions.
+  offers "fly to" and "directions" actions. Its rows exist only while it is
+  open, and only as far as the user has scrolled.
 - **`PlaceSearch`** and **`Toast`** are presentational.
 - **`ErrorBoundary`** turns a render-time crash into a screen with *Reload*,
   *Reset app data* and *Copy details*, instead of a blank page.
@@ -78,8 +82,8 @@ source — swapping in a different provider would only touch these files.
 ### Utils (`src/utils/`)
 Pure, dependency-free functions — trivial to test and reuse: `geo` (coordinate
 and bbox validation/maths), `searchPlan` (the search policy, see below),
-`distance`, `directions`, plus `errorLog` and `appReset` for diagnostics and
-recovery.
+`distance`, `directions`, `lastView` (the remembered map view), plus `errorLog`
+and `appReset` for diagnostics and recovery.
 
 ### State ownership (`src/App.jsx`)
 `App` is the single source of truth and orchestrator. It:
@@ -116,6 +120,9 @@ class of bug entirely.
 | **Hedged mirrors instead of sequential fallback** | Sequential fallback makes a *silent* mirror cost a full timeout before the next one is tried. Hedging bounds that at 3.5 s, which is the difference between "slow" and "broken". |
 | **`divIcon` SVG markers** | Sidesteps the classic Leaflet+bundler broken-marker-image issue and stays crisp on retina. |
 | **App-shell-only PWA caching** | Keeps fountain data and tiles fresh while still giving instant repeat loads; full offline data is a roadmap item. |
+| **Open on the last view** | Until a fix arrives (seconds on a cold start, never when location is refused) the app must show something. The area last looked at is usually the right one, so its tiles and first search are useful instead of a detour through the default city. Stored on the device only (`utils/lastView.js`); "Reset app data" clears it. |
+| **Vendor code in its own chunk** | React and Leaflet are 90% of the JavaScript and change only on a dependency bump; split out, an app release re-downloads ~11 kB instead of ~110 kB. |
+| **Tiles fetched with CORS** | Lets the service worker store only genuine 200s, and avoids the multi-megabyte quota padding browsers apply to each opaque response. |
 
 ## The search policy (`src/utils/searchPlan.js`)
 
@@ -140,12 +147,34 @@ Two details matter more than they look:
 - **Query boxes are padded by 30%** and their coverage remembered for three
   minutes, so ordinary small pans cost nothing at all.
 
+## Rendering cost
+
+The app runs on phones, outdoors, on battery, so what the main thread does
+between two taps matters as much as the network. Three rules keep it quiet:
+
+- **A search result is diffed, not re-rendered.** A pan mostly returns
+  fountains that are already on the map. `FountainLayer` adds and removes only
+  the difference, in bulk. One `<Marker>` per fountain looked equivalent but
+  re-set every marker's position on each result, and the cluster library
+  answers a position change by removing and re-inserting the marker.
+- **GPS jitter stops at `useAnchor`.** A watch reports a slightly different fix
+  about once a second. Only the user dot follows the raw fix; distances (list,
+  popups) are computed from the position rounded to ~10 m, and `MapView`,
+  `FountainLayer` and `FountainList` are memoized on it.
+- **Nothing is built before it can be seen.** Popups are created when opened;
+  list rows when the sheet opens, a page at a time.
+
+The always-on animation (the pulsing user dot) uses `transform` and `opacity`
+only, so it runs on the compositor instead of repainting every frame.
+
 ## Rate limiting & etiquette
 
 The public Overpass API is a shared community resource. We are gentle with it:
 queries are bounded by the visible bbox, capped in area, de-duplicated by the
-coverage rule, cached for five minutes, backed off after failures, given a
-server-side `timeout:25`, and aborted when superseded. For heavy or production
+coverage rule, cached for five minutes, backed off after failures, declared
+with a small server-side budget (`timeout:15`, `maxsize` 64 MiB — a query that
+asks for less is admitted more readily when a server is busy), and aborted when
+superseded. For heavy or production
 traffic, host your own Overpass instance or pre-process an extract.
 
 ## Testing
@@ -163,7 +192,9 @@ invisible until a user is standing in the street:
 - `distance` — known city-to-city distances and formatting,
 - `App` — the orchestration between locating and searching (fresh fix after a
   background spell, refresh on resume, and what the sheet is allowed to claim),
-  with the map stubbed out since none of that is about drawing.
+  with the map stubbed out since none of that is about drawing,
+- `FountainList` — which rows exist when (none while closed, the nearest on
+  open, more on scroll).
 
 The React layer is verified by driving the built app in a real browser
 (Playwright) against a stubbed Overpass: happy path, dead mirror, malformed

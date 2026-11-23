@@ -38,6 +38,15 @@ describe('buildQuery', () => {
     expect(query).toContain('out center tags;')
     expect(query).toContain('[out:json]')
   })
+
+  it('announces a small budget so busy servers still admit it', () => {
+    const query = buildQuery(PARIS_BBOX)
+    // Never longer than the client is willing to wait for one mirror.
+    expect(query).toContain('[timeout:15]')
+    expect(query).toMatch(/\[maxsize:\d+\]/)
+    // Already selected by the two node clauses.
+    expect(query).not.toContain('water_tap')
+  })
 })
 
 describe('normalize', () => {

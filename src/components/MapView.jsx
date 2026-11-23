@@ -1,18 +1,17 @@
-import { memo, useCallback, useEffect, useMemo, useRef } from 'react'
+import { memo, useCallback, useEffect, useRef } from 'react'
 import {
   MapContainer,
   TileLayer,
   Marker,
-  Popup,
   Circle,
   useMap,
   useMapEvents,
 } from 'react-leaflet'
-import MarkerClusterGroup from 'react-leaflet-cluster'
-import { fountainIcon, userIcon } from './mapIcons.js'
-import { directionsUrl } from '../utils/directions.js'
-import { formatDistance, distanceMeters } from '../utils/distance.js'
+import FountainLayer from './FountainLayer.jsx'
+import { userIcon } from './mapIcons.js'
+import { useAnchor } from '../hooks/useAnchor.js'
 import { isValidLatLng } from '../utils/geo.js'
+import { readLastView, saveLastView } from '../utils/lastView.js'
 
 /**
  * @typedef {import('../services/overpass.js').Fountain} Fountain
@@ -158,7 +157,7 @@ function ViewportSync() {
  */
 function LocationPicker({ pickMode, onPick }) {
   const stateRef = useLatest({ pickMode, onPick })
-  useMapEvents({
+  const map = useMapEvents({
     click: (e) => {
       const { pickMode: active, onPick: pick } = stateRef.current
       if (!active || !pick) return
@@ -166,45 +165,37 @@ function LocationPicker({ pickMode, onPick }) {
       pick(e.latlng.lat, e.latlng.lng)
     },
   })
+
+  // Show a crosshair while picking. The class is toggled on the container
+  // directly: `MapContainer` reads its `className` once, on mount, so passing
+  // a changing one as a prop silently does nothing.
+  useEffect(() => {
+    const container = map.getContainer()
+    container.classList.toggle('map--picking', pickMode)
+    return () => container.classList.remove('map--picking')
+  }, [map, pickMode])
+
   return null
 }
 
 /**
- * A single fountain marker with its popup. Memoized so that re-rendering the
- * map (a new user position, a loading flag) does not rebuild every marker.
- *
- * @param {{ fountain: Fountain, userPosition: GeoPosition|null }} props
+ * Remembers where the map comes to rest, so the next launch can open there
+ * (see {@link readLastView}).
  */
-const FountainMarker = memo(function FountainMarker({ fountain, userPosition }) {
-  return (
-    <Marker position={[fountain.lat, fountain.lng]} icon={fountainIcon}>
-      <Popup>
-        <strong>{fountain.name || 'Drinking water'}</strong>
-        {userPosition && (
-          <div className="popup-distance">
-            {formatDistance(
-              distanceMeters(
-                userPosition.lat,
-                userPosition.lng,
-                fountain.lat,
-                fountain.lng,
-              ),
-            )}{' '}
-            away
-          </div>
-        )}
-        <a
-          className="popup-directions"
-          href={directionsUrl(fountain.lat, fountain.lng)}
-          target="_blank"
-          rel="noreferrer"
-        >
-          Directions
-        </a>
-      </Popup>
-    </Marker>
-  )
-})
+function ViewMemory() {
+  useMapEvents({
+    moveend: (e) => {
+      try {
+        const map = e.target
+        const { lat, lng } = map.getCenter()
+        saveLastView(lat, lng, map.getZoom())
+      } catch {
+        /* map torn down mid-event: nothing worth remembering */
+      }
+    },
+  })
+  return null
+}
 
 /**
  * The full-screen interactive map: OSM tiles, the user's location, an accuracy
@@ -222,7 +213,7 @@ const FountainMarker = memo(function FountainMarker({ fountain, userPosition }) 
  * @param {(lat: number, lng: number) => void} [props.onPick] - Called with the
  *   tapped coordinates while `pickMode` is active.
  */
-export default function MapView({
+function MapView({
   fountains,
   userPosition,
   flyTo,
@@ -230,33 +221,31 @@ export default function MapView({
   pickMode = false,
   onPick,
 }) {
-  // Default view: Paris, until we get a real fix. Chosen because OSM fountain
-  // coverage there is excellent, so the empty state still looks alive.
+  // Where to open, in order of preference: on the user if a fix is already
+  // known; else where the map was last left, which is very likely where they
+  // are again; else Paris, chosen because OSM fountain coverage there is
+  // excellent, so a first launch still looks alive.
   // Computed once: `MapContainer` only reads it on mount, and recomputing it
   // on every render invites accidental remounts of the whole map.
-  const initialView = useRef(
-    userPosition && isValidLatLng(userPosition.lat, userPosition.lng)
-      ? { center: [userPosition.lat, userPosition.lng], zoom: FOCUS_ZOOM }
-      : { center: [48.8566, 2.3522], zoom: 13 },
-  ).current
+  const initialView = useRef(null)
+  if (initialView.current === null) {
+    const remembered = readLastView()
+    initialView.current =
+      userPosition && isValidLatLng(userPosition.lat, userPosition.lng)
+        ? { center: [userPosition.lat, userPosition.lng], zoom: FOCUS_ZOOM }
+        : remembered
+          ? { center: [remembered.lat, remembered.lng], zoom: remembered.zoom }
+          : { center: [48.8566, 2.3522], zoom: 13 }
+  }
 
   const validUser =
     userPosition && isValidLatLng(userPosition.lat, userPosition.lng)
       ? userPosition
       : null
 
-  // Popup distances only need ~10 m precision. Quantizing the position keeps
-  // its identity stable through GPS jitter, so a stationary user does not
-  // re-render every marker several times a second.
-  const userLatKey = validUser ? validUser.lat.toFixed(4) : null
-  const userLngKey = validUser ? validUser.lng.toFixed(4) : null
-  const anchor = useMemo(
-    () =>
-      userLatKey && userLngKey
-        ? { lat: Number(userLatKey), lng: Number(userLngKey), accuracy: 0 }
-        : null,
-    [userLatKey, userLngKey],
-  )
+  // Popup distances only need ~10 m precision; the fountain layer is keyed on
+  // this rather than on the raw fix, so GPS jitter never reaches it.
+  const anchor = useAnchor(userPosition)
 
   const accuracyRadius = validUser
     ? Math.min(
@@ -265,13 +254,6 @@ export default function MapView({
       )
     : 0
 
-  // Defence in depth: the service already filters bad coordinates, but a
-  // single invalid marker throws inside Leaflet and blanks the screen.
-  const plottable = useMemo(
-    () => fountains.filter((f) => isValidLatLng(f.lat, f.lng)),
-    [fountains],
-  )
-
   const handleBounds = useCallback(
     (getBbox) => onBoundsChange?.(getBbox),
     [onBoundsChange],
@@ -279,17 +261,22 @@ export default function MapView({
 
   return (
     <MapContainer
-      center={initialView.center}
-      zoom={initialView.zoom}
+      center={initialView.current.center}
+      zoom={initialView.current.zoom}
       minZoom={3}
       maxZoom={19}
       zoomControl={false}
-      className={pickMode ? 'map map--picking' : 'map'}
+      className="map"
     >
       <TileLayer
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
         maxZoom={19}
+        // Request tiles with CORS. The service worker can then see what it is
+        // caching: an opaque (no-CORS) response hides its status, so an error
+        // tile gets cached like a good one, and browsers pad each opaque entry
+        // by megabytes when counting the app's storage quota.
+        crossOrigin="anonymous"
         // Fetch tiles only once the pan settles: fewer requests, less chance of
         // being throttled by the tile servers mid-gesture.
         updateWhenIdle
@@ -300,6 +287,7 @@ export default function MapView({
       <BoundsReporter onSettled={handleBounds} />
       <ViewportSync />
       <LocationPicker pickMode={pickMode} onPick={onPick} />
+      <ViewMemory />
 
       {validUser && (
         <>
@@ -314,11 +302,11 @@ export default function MapView({
         </>
       )}
 
-      <MarkerClusterGroup chunkedLoading removeOutsideVisibleBounds>
-        {plottable.map((f) => (
-          <FountainMarker key={f.id} fountain={f} userPosition={anchor} />
-        ))}
-      </MarkerClusterGroup>
+      <FountainLayer fountains={fountains} userPosition={anchor} />
     </MapContainer>
   )
 }
+
+// Memoized: `App` re-renders for reasons the map does not care about (a
+// keystroke in the place search, a toast, the sheet opening).
+export default memo(MapView)

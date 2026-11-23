@@ -29,11 +29,32 @@ export default defineConfig({
   // prefixed with the repository name. For a custom domain or a user/org
   // site, set this back to '/'.
   base: '/drinking-fountains/',
+  build: {
+    rollupOptions: {
+      output: {
+        // Third-party code (React, Leaflet) is nine tenths of the JavaScript
+        // and only changes when a dependency is bumped. In its own file it
+        // keeps its content hash across app releases, so an update downloads
+        // the few kilobytes that changed instead of the whole bundle again.
+        // Stylesheets are left alone so their cascade order stays as imported.
+        manualChunks(id) {
+          if (id.includes('node_modules') && !/\.css($|\?)/.test(id)) {
+            return 'vendor'
+          }
+          return undefined
+        },
+      },
+    },
+  },
   plugins: [
     react(),
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.png', 'apple-touch-icon.png'],
+      // The install icons are fetched by the browser when (and if) the app is
+      // installed. Pre-caching them made every first visit download ~480 kB of
+      // artwork the page itself never displays — more than all of its code.
+      includeManifestIcons: false,
       manifest: {
         name: 'Drinking Fountains',
         short_name: 'Fountains',
@@ -57,8 +78,9 @@ export default defineConfig({
         ],
       },
       workbox: {
-        // Pre-cache the build output (the app shell).
-        globPatterns: ['**/*.{js,css,html,svg,png,ico}'],
+        // Pre-cache the build output (the app shell). The two icons the page
+        // links to come in through `includeAssets` above.
+        globPatterns: ['**/*.{js,css,html}'],
         // Take over immediately after an update. Without this, a home-screen
         // install can keep serving an old shell whose JavaScript chunks no
         // longer exist on the server — the app then fails to boot with no
@@ -72,17 +94,26 @@ export default defineConfig({
         // fountains are worse than no fountains.
         navigateFallbackDenylist: [/^\/api/],
         // Map tiles: cache opportunistically so revisited areas load faster,
-        // but always try the network first to stay current. The subdomain-less
-        // host is the one OSM recommends; the `[a-c].` variants stay matched so
-        // tiles cached by earlier versions of the app remain usable.
+        // but always try the network first to stay current.
+        //
+        // Tiles are requested with CORS (see `MapView`), so only genuine 200s
+        // are stored. The cache name changed with that switch: the previous
+        // `osm-tiles` cache holds opaque responses, which cannot be served to a
+        // CORS request, and is deleted on startup (see `main.jsx`).
         runtimeCaching: [
           {
-            urlPattern: /^https:\/\/([a-c]\.)?tile\.openstreetmap\.org\/.*/i,
+            urlPattern: /^https:\/\/tile\.openstreetmap\.org\/.*/i,
             handler: 'StaleWhileRevalidate',
             options: {
-              cacheName: 'osm-tiles',
-              expiration: { maxEntries: 500, maxAgeSeconds: 60 * 60 * 24 * 30 },
-              cacheableResponse: { statuses: [0, 200] },
+              cacheName: 'osm-tiles-cors',
+              expiration: {
+                maxEntries: 500,
+                maxAgeSeconds: 60 * 60 * 24 * 30,
+                // Tiles are the only bulky thing the app stores; if the device
+                // runs short, drop them rather than fail to cache the shell.
+                purgeOnQuotaError: true,
+              },
+              cacheableResponse: { statuses: [200] },
             },
           },
         ],

@@ -4,6 +4,7 @@ import MapView from './components/MapView.jsx'
 import FountainList from './components/FountainList.jsx'
 import PlaceSearch from './components/PlaceSearch.jsx'
 import Toast from './components/Toast.jsx'
+import { useAnchor } from './hooks/useAnchor.js'
 import { useGeolocation } from './hooks/useGeolocation.js'
 import { useFountains } from './hooks/useFountains.js'
 import { usePlaceSearch } from './hooks/usePlaceSearch.js'
@@ -87,6 +88,9 @@ export default function App() {
   const hiddenSinceRef = useRef(Date.now())
 
   const position = manualPosition ?? gpsPosition
+  // What the list measures distances from: the position to ~10 m, stable
+  // through GPS jitter so a stationary user does not re-sort it every second.
+  const listAnchor = useAnchor(position)
 
   // Read by the resume listener, which must stay subscribed across renders.
   const manualPositionRef = useRef(manualPosition)
@@ -213,6 +217,8 @@ export default function App() {
     setSheetOpen(false)
   }, [])
 
+  const toggleSheet = useCallback(() => setSheetOpen((o) => !o), [])
+
   // Once a manual location (pin or city) is active, a stale GPS error isn't
   // relevant anymore — the app is working via the alternative the user chose.
   const activeError = dataError || (!manualPosition && geoError) || null
@@ -310,9 +316,9 @@ export default function App() {
         fountains={fountains}
         status={statusLabel}
         searched={hasSearched}
-        userPosition={position}
+        userPosition={listAnchor}
         open={sheetOpen}
-        onToggle={() => setSheetOpen((o) => !o)}
+        onToggle={toggleSheet}
         onSelect={handleSelect}
       />
     </div>

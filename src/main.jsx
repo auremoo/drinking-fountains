@@ -4,7 +4,10 @@ import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import { installGlobalErrorLogging } from './utils/errorLog.js'
-import { installChunkErrorRecovery } from './utils/appReset.js'
+import {
+  dropLegacyTileCache,
+  installChunkErrorRecovery,
+} from './utils/appReset.js'
 
 // Leaflet's stylesheet must be imported before any map renders.
 import 'leaflet/dist/leaflet.css'
@@ -14,6 +17,7 @@ import './styles.css'
 // before the first component mounts.
 installGlobalErrorLogging()
 installChunkErrorRecovery()
+dropLegacyTileCache()
 
 const container = document.getElementById('root')
 

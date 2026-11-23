@@ -77,7 +77,8 @@ src/
 ├── App.jsx                 # Top-level state & control flow
 ├── styles.css              # Global, mobile-first styles
 ├── components/
-│   ├── MapView.jsx         # Leaflet map, markers, clustering, popups
+│   ├── MapView.jsx         # Leaflet map, tiles, user position
+│   ├── FountainLayer.jsx   # Clustered fountain markers + popups
 │   ├── FountainList.jsx    # Distance-sorted bottom-sheet list
 │   ├── PlaceSearch.jsx     # City/address search panel
 │   ├── Toast.jsx           # Errors, hints and notices
@@ -85,6 +86,7 @@ src/
 │   └── mapIcons.js         # Custom SVG Leaflet markers
 ├── hooks/
 │   ├── useGeolocation.js   # Wraps the browser Geolocation API
+│   ├── useAnchor.js        # Position rounded to ~10 m, immune to GPS jitter
 │   ├── useFountains.js     # Owns the dataset + request lifecycle
 │   └── usePlaceSearch.js   # Type-ahead + geocoding state
 ├── services/
@@ -97,11 +99,12 @@ src/
     ├── distance.js         # Haversine distance + formatting
     ├── directions.js       # Maps deep-link builder
     ├── errorLog.js         # Persisted error log for bug reports
+    ├── lastView.js         # Remembers where the map was last left
     └── appReset.js         # Service-worker / cache recovery
 ```
 
-Every `*.test.js` file sits next to the module it covers; `npm test` runs them
-in Node with `fetch` stubbed (no network, no browser).
+Every `*.test.js(x)` file sits next to the module it covers; `npm test` runs
+them in Node with `fetch` stubbed (no network, no browser).
 
 ## Reliability
 
@@ -125,6 +128,17 @@ saturated or down. Rather than hoping otherwise, it is built to keep working:
 
 Recorded errors (including ones that only happened once) can be copied from that
 error screen and pasted into a bug report.
+
+## What stays on your device
+
+The app has no server of its own and no analytics. Two things are kept in the
+browser's local storage, and neither ever leaves the device:
+
+- the **last map view** (centre and zoom), so the next launch opens where you
+  left off instead of on the default city;
+- the **last few errors**, so a bug can be reported with details.
+
+**Reset app data** on the error screen erases both, along with every cache.
 
 ## Data & attribution
 
