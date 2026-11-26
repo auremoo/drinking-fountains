@@ -39,12 +39,23 @@ import { distanceMeters } from '../utils/distance.js'
  * Public Overpass endpoints, in order of preference. They are queried with a
  * stagger rather than strictly one after another, so this order only decides
  * who gets a head start.
+ *
+ * **Every entry must cover the whole planet.** The race keeps the first valid
+ * answer, and a regional instance answers a query outside its region with a
+ * perfectly valid, fast, *empty* result. `overpass.osm.ch` (Switzerland only)
+ * used to sit here: whenever the main mirror was slow it won the race and the
+ * app reported "0 fountains" everywhere else — then cached that for minutes.
+ *
+ * `overpass.private.coffee` is the current name of the former
+ * `overpass.kumi.systems`; the new host is used directly so the POST is not
+ * subject to a cross-origin redirect.
+ *
+ * @see https://wiki.openstreetmap.org/wiki/Overpass_API#Public_Overpass_API_instances
  * @type {string[]}
  */
 export const ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
-  'https://overpass.kumi.systems/api/interpreter',
-  'https://overpass.osm.ch/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
 ]
 
 /**
