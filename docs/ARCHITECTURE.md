@@ -41,7 +41,7 @@ The only place that knows about the outside world.
   `raceWithHedging`, which queries interchangeable providers with a small
   stagger and keeps the first success.
 - **`overpass.js`** builds the Overpass QL query for a bounding box, runs it
-  against three mirrors via `raceWithHedging`, and **normalizes** raw OSM
+  against two planet-wide mirrors via `raceWithHedging`, and **normalizes** raw OSM
   elements into a small, stable `Fountain` shape. It validates every coordinate,
   de-duplicates elements matched by several query clauses, caps huge result
   sets, and caches answers for five minutes.

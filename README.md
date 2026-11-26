@@ -113,7 +113,7 @@ saturated or down. Rather than hoping otherwise, it is built to keep working:
 
 | Failure | What the app does |
 | --- | --- |
-| An Overpass mirror is down or silent | Three mirrors are queried with a 3.5 s stagger; the first usable answer wins |
+| An Overpass mirror is down or silent | Two planet-wide mirrors are queried with a 3.5 s stagger; the first usable answer wins |
 | Every mirror fails | Keeps the fountains already on screen, shows a plain-language error with a **Retry** button |
 | A server answers "too many requests" | Automatic searches back off exponentially (6 s → 60 s) instead of piling on |
 | The user pans a few streets | No request at all — searches are padded and their coverage remembered for 3 minutes |
